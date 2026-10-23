@@ -20,6 +20,7 @@ Single Source of Truth for **AuraKeys Studio v2.5**: a polyphonic live synthesiz
 - **Persistence**: IndexedDB (`VoiceStorage.ts`) storing Float32Array channel data, pitch metadata, and QWERTY key mappings
 - **Styling & UI**: Tailwind CSS v3, `lucide-react`, custom Web Audio canvas visualizer
 - **Dev Server**: Vite running on `http://localhost:5188/` (host: true)
+- **GitHub Repository**: `https://github.com/zak-yn/aurakeys-studio`
 
 ---
 
@@ -70,6 +71,9 @@ src/
 ---
 
 ## 5. Changelog
+- **2026-10-24 (v2.5.8)**: Official GitHub Repository & Clean Source Release.
+  - **GitHub Remote (`https://github.com/zak-yn/aurakeys-studio`)**: Created public repository under `zak-yn`, initialized Git tracking on `main` branch, and pushed all core source files and 30 vocal sample assets.
+  - **Repository Documentation**: Authored comprehensive `README.md` with visual badges, performance keymaps, audio architecture, and setup instructions, along with clean `.gitignore`.
 - **2026-10-24 (v2.5.7)**: 30 Real Human Voice Sample Library & 100% Key Registration.
   - **30 Free Real Human Voice Audio Clips (`public/voices/*.ogg`)**: Sourced and packaged 30 CC0 / Public Domain native vocal clips into `public/voices/`, replacing synthetic sine waveforms.
   - **Full Keyboard Registration**: All 30 keys on the QWERTY keyboard now have dedicated human vocal voices mapped out-of-the-box (Top [Q-P]: *Hey, Yeah, Go, Fire, Drop, Power, Dance, Play, Alright, Yes*; Mid [A-;]: *Hello, Listen, Music, Love, Heart, Soul, Sing, Dream, Sound, Voice*; Bass [Z-/]: *One, Two, Three, Four, Bass, Beat, Drum, Touch, Night, Baby*). Zero unmapped or silent keys.
