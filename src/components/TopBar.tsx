@@ -125,6 +125,20 @@ const TopBarComponent: React.FC<TopBarProps> = ({
 
       {/* Preset Bar (Hotkeys 5 - 9 & 0 for Sampler) + Mic Sample Studio Button */}
       <div className="flex items-center gap-1.5 flex-wrap">
+        {/* Compact Preset Dropdown */}
+        <select
+          id="preset-dropdown"
+          value={PRESETS.findIndex((p) => p.name === currentPreset.name)}
+          onChange={(e) => onSelectPreset(parseInt(e.target.value, 10))}
+          className="bg-black/40 text-slate-300 border border-white/10 rounded px-2 py-1 focus:outline-none"
+          title="Select Synth Preset"
+        >
+          {PRESETS.map((p, idx) => (
+            <option key={idx} value={idx}>
+              {p.name} ({p.category})
+            </option>
+          ))}
+        </select>
         <div className="flex items-center gap-1 bg-black/40 p-1 rounded-lg border border-white/5 flex-wrap">
           <span className="text-[10px] font-mono text-slate-500 px-1.5">VOICE:</span>
           {PRESETS.map((p, idx) => {
