@@ -78,7 +78,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
   };
 
   return (
-    <header className="w-full border-b border-white/[0.08] bg-[#0c0e14]/90 backdrop-blur-md px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs select-none">
+    <header className="w-full border-b border-white/[0.08] bg-[#0c0e14] px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs select-none">
       {/* Brand & Transport Status */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">

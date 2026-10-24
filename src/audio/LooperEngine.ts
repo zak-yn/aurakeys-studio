@@ -143,6 +143,9 @@ export class LooperEngine {
     }
   }
 
+  private stepRafPending: boolean = false;
+  private latestDispatchedStep: number = 0;
+
   private handleStepTick(time: number) {
     const step = this.currentStep;
     const synthEngine = SynthEngine.getInstance();
@@ -151,10 +154,12 @@ export class LooperEngine {
     // 1. Trigger procedural / custom drum beat
     drumMachine.triggerStep(step % 16, time);
 
-    // 2. Play events on each track
-    this.tracks.forEach((track, trackIdx) => {
+    // 2. Play events on each track (zero-allocation loop)
+    const stepBaseSec = 60 / (this.bpm * 4);
+    for (let trackIdx = 0; trackIdx < this.tracks.length; trackIdx++) {
+      const track = this.tracks[trackIdx];
+
       // If track is recording for 1 full cycle, seamlessly transition to OVERDUBBING
-      // so the loop keeps playing and the player can continue capturing additional notes & phrases!
       if (track.state === 'RECORDING') {
         track.recordStepCounter++;
         if (track.recordStepCounter >= this.totalSteps) {
@@ -164,35 +169,37 @@ export class LooperEngine {
         }
       }
 
-      if (track.isMuted) return;
+      if (track.isMuted) continue;
 
       if (track.state === 'PLAYING' || track.state === 'OVERDUBBING' || track.state === 'RECORDING') {
-        const eventsAtStep = track.events.filter((e) => e.step === step);
-        if (eventsAtStep.length > 0) {
-          eventsAtStep.forEach((ev) => {
-            // If the player is currently actively holding down this key, do not double-trigger it from playback
-            if (this.pendingNotes.has(ev.code)) return;
-            const stepDurationSeconds = (60 / (this.bpm * 4)) * ev.durationSteps * 0.95;
-            synthEngine.triggerTrackEvent(
-              trackIdx,
-              ev.notes,
-              stepDurationSeconds,
-              time,
-              track.preset,
-              ev.code
-            );
-          });
+        const events = track.events;
+        for (let j = 0; j < events.length; j++) {
+          const ev = events[j];
+          if (ev.step !== step) continue;
+          // If the player is currently actively holding down this key, do not double-trigger it from playback
+          if (this.pendingNotes.has(ev.code)) continue;
+          const stepDurationSeconds = stepBaseSec * ev.durationSteps * 0.95;
+          synthEngine.triggerTrackEvent(
+            trackIdx,
+            ev.notes,
+            stepDurationSeconds,
+            time,
+            track.preset,
+            ev.code
+          );
         }
       }
-    });
+    }
 
-    // Notify UI of step change asynchronously via rAF to decouple audio scheduling from React rendering
-    if (this.onStepChange) {
-      const cb = this.onStepChange;
-      const curStep = step;
-      const totSteps = this.totalSteps;
+    // Notify UI of step change asynchronously via coalesced rAF to decouple audio scheduling from React rendering
+    this.latestDispatchedStep = step;
+    if (this.onStepChange && !this.stepRafPending) {
+      this.stepRafPending = true;
       requestAnimationFrame(() => {
-        cb(curStep, totSteps);
+        this.stepRafPending = false;
+        if (this.onStepChange) {
+          this.onStepChange(this.latestDispatchedStep, this.totalSteps);
+        }
       });
     }
 
@@ -379,7 +386,7 @@ export class LooperEngine {
     requestAnimationFrame(() => {
       this.notifyTracksUpdatePending = false;
       if (this.onTracksUpdate) {
-        this.onTracksUpdate([...this.tracks]);
+        this.onTracksUpdate(this.tracks.map((t) => ({ ...t, events: [...t.events] })));
       }
     });
   }

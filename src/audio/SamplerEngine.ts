@@ -75,6 +75,7 @@ export class SamplerEngine {
   private static instance: SamplerEngine | null = null;
 
   public voices: RegisteredVoice[] = [];
+  private voiceByIdMap: Map<string, RegisteredVoice> = new Map();
   public keyVoiceMap: Record<string, string> = {}; // QWERTY code -> voiceId
   public activePaintVoiceId: string | null = null;
   public activeVoiceIndex: number = 0;
@@ -82,6 +83,8 @@ export class SamplerEngine {
   public isRecordingMic: boolean = false;
   public micLevel: number = 0;
 
+  private initPromise: Promise<void> | null = null;
+  private persistTimer: any = null;
   private mediaStream: MediaStream | null = null;
   private mediaRecorder: MediaRecorder | null = null;
   private recordedChunks: Blob[] = [];
@@ -199,8 +202,19 @@ export class SamplerEngine {
 
   /**
    * Initializes default human vocal kit or loads from IndexedDB persistence.
+   * Deduplicated via initPromise so concurrent calls never double-fetch/decode.
    */
   public async initDefaultSample(): Promise<void> {
+    if (this.voices.length > 0) return;
+    if (this.initPromise) return this.initPromise;
+
+    this.initPromise = this._doInitDefaultSample().finally(() => {
+      this.initPromise = null;
+    });
+    return this.initPromise;
+  }
+
+  private async _doInitDefaultSample(): Promise<void> {
     if (this.voices.length > 0) return;
 
     // 1. Try loading from IndexedDB
@@ -239,6 +253,7 @@ export class SamplerEngine {
         }
 
         this.voices = restoredVoices;
+        this.rebuildVoiceIndex();
         this.keyVoiceMap = savedKit.keyVoiceMap || {};
         this.activePaintVoiceId = this.voices[0]?.id || null;
         this.syncToSynthAndNotify();
@@ -250,6 +265,13 @@ export class SamplerEngine {
 
     // 2. Load 30 real human vocal samples from /voices/*.ogg
     await this.loadFactoryVoices();
+  }
+
+  private rebuildVoiceIndex() {
+    this.voiceByIdMap.clear();
+    for (let i = 0; i < this.voices.length; i++) {
+      this.voiceByIdMap.set(this.voices[i].id, this.voices[i]);
+    }
   }
 
   /**
@@ -348,6 +370,54 @@ export class SamplerEngine {
     return true;
   }
 
+  /**
+   * Explicitly assigns or unmaps a key (used for drag-swipe painting so swiping over keys never toggles unexpectedly).
+   */
+  public setKeyVoiceExplicit(code: string, voiceId: string | null): boolean {
+    if (voiceId === null) {
+      if (!(code in this.keyVoiceMap)) return false;
+      delete this.keyVoiceMap[code];
+    } else {
+      if (this.keyVoiceMap[code] === voiceId) return false;
+      this.keyVoiceMap[code] = voiceId;
+    }
+    this.notifyUpdate();
+    this.persistKit();
+    return true;
+  }
+
+  /**
+   * Bulk-assigns an array of QWERTY key codes (e.g. a full row or all 30 keys) to a voice in 1 operation.
+   */
+  public assignKeysToVoice(codes: string[], targetVoiceId?: string): boolean {
+    const voiceId = targetVoiceId || this.activePaintVoiceId;
+    if (!voiceId) return false;
+
+    for (let i = 0; i < codes.length; i++) {
+      this.keyVoiceMap[codes[i]] = voiceId;
+    }
+
+    this.notifyUpdate();
+    this.persistKit();
+    return true;
+  }
+
+  /**
+   * Restores the default 30-key factory voice mapping without deleting any custom recorded voices.
+   */
+  public restoreDefaultKeyMap() {
+    const newMap: Record<string, string> = {};
+    for (let i = 0; i < FACTORY_VOICE_SPECS.length; i++) {
+      const spec = FACTORY_VOICE_SPECS[i];
+      if (this.voiceByIdMap.has(spec.id)) {
+        newMap[spec.keyCode] = spec.id;
+      }
+    }
+    this.keyVoiceMap = newMap;
+    this.notifyUpdate();
+    this.persistKit();
+  }
+
   public setPaintVoice(voiceId: string | null) {
     this.activePaintVoiceId = voiceId;
     this.notifyPaintVoice();
@@ -356,11 +426,11 @@ export class SamplerEngine {
   public getVoiceForKey(code: string): RegisteredVoice | null {
     const voiceId = this.keyVoiceMap[code];
     if (!voiceId) return null;
-    return this.voices.find((v) => v.id === voiceId) || null;
+    return this.voiceByIdMap.get(voiceId) || null;
   }
 
   public getVoiceById(id: string): RegisteredVoice | null {
-    return this.voices.find((v) => v.id === id) || null;
+    return this.voiceByIdMap.get(id) || null;
   }
 
   public selectActiveVoice(index: number) {
@@ -383,6 +453,24 @@ export class SamplerEngine {
 
     this.syncToSynthAndNotify();
     this.persistKit();
+  }
+
+  public renameVoice(voiceId: string, newName: string): boolean {
+    const trimmed = newName.trim().slice(0, 28);
+    if (!trimmed) return false;
+
+    const idx = this.voices.findIndex((v) => v.id === voiceId);
+    if (idx === -1) return false;
+
+    this.voices[idx] = {
+      ...this.voices[idx],
+      name: trimmed,
+    };
+
+    this.rebuildVoiceIndex();
+    this.notifyUpdate();
+    this.persistKit();
+    return true;
   }
 
   public deleteVoice(voiceId: string) {
@@ -421,38 +509,45 @@ export class SamplerEngine {
   }
 
   /**
-   * Persists the current voice library and key map to IndexedDB.
+   * Persists the current voice library and key map to IndexedDB (debounced 250ms to prevent main-thread spikes).
    */
-  private async persistKit() {
-    try {
-      const serialized: SerializedVoice[] = this.voices.map((v) => ({
-        id: v.id,
-        name: v.name,
-        color: v.color,
-        rootNoteOverride: v.rootNoteOverride,
-        autoPitchEnabled: v.autoPitchEnabled,
-        octaveShift: v.octaveShift,
-        sampleRate: v.analysis.trimmedBuffer.sampleRate,
-        durationSeconds: v.analysis.durationSeconds,
-        channelData: VoiceStorage.audioBufferToData(v.analysis.trimmedBuffer),
-        frequencyHz: v.analysis.frequencyHz,
-        detectedNote: v.analysis.detectedNote,
-        detectedMidi: v.analysis.detectedMidi,
-        centsCorrection: v.analysis.centsCorrection,
-        confidence: v.analysis.confidence,
-        waveformPeaks: v.analysis.waveformPeaks,
-      }));
-
-      await VoiceStorage.saveKit({
-        voices: serialized,
-        keyVoiceMap: this.keyVoiceMap,
-      });
-    } catch (e) {
-      console.warn('[SamplerEngine] Error saving kit to storage:', e);
+  private persistKit() {
+    if (this.persistTimer) {
+      clearTimeout(this.persistTimer);
     }
+    this.persistTimer = setTimeout(async () => {
+      this.persistTimer = null;
+      try {
+        const serialized: SerializedVoice[] = this.voices.map((v) => ({
+          id: v.id,
+          name: v.name,
+          color: v.color,
+          rootNoteOverride: v.rootNoteOverride,
+          autoPitchEnabled: v.autoPitchEnabled,
+          octaveShift: v.octaveShift,
+          sampleRate: v.analysis.trimmedBuffer.sampleRate,
+          durationSeconds: v.analysis.durationSeconds,
+          channelData: VoiceStorage.audioBufferToData(v.analysis.trimmedBuffer),
+          frequencyHz: v.analysis.frequencyHz,
+          detectedNote: v.analysis.detectedNote,
+          detectedMidi: v.analysis.detectedMidi,
+          centsCorrection: v.analysis.centsCorrection,
+          confidence: v.analysis.confidence,
+          waveformPeaks: v.analysis.waveformPeaks,
+        }));
+
+        await VoiceStorage.saveKit({
+          voices: serialized,
+          keyVoiceMap: this.keyVoiceMap,
+        });
+      } catch (e) {
+        console.warn('[SamplerEngine] Error saving kit to storage:', e);
+      }
+    }, 250);
   }
 
   private syncToSynthAndNotify() {
+    this.rebuildVoiceIndex();
     SynthEngine.getInstance().syncVoices(this.voices);
     this.notifyUpdate();
   }
@@ -584,8 +679,8 @@ export class SamplerEngine {
       octaveShift: 0,
     };
 
-    this.voices.push(newVoice);
-    this.activeVoiceIndex = this.voices.length - 1;
+    this.voices.unshift(newVoice);
+    this.activeVoiceIndex = 0;
     this.activePaintVoiceId = newVoice.id;
 
     this.syncToSynthAndNotify();

@@ -30,11 +30,11 @@ public/
 └── voices/                    # 30 real human voice sample files (.ogg)
 src/
 ├── audio/
-│   ├── SynthEngine.ts         # Multi-voice graph: 1 Live PolySynth + Multi-Voice Sampler Pool + 4 Track PolySynths/Samplers + Master FX
-│   ├── LooperEngine.ts        # 4-Track quantized event recorder synced to Tone.Transport (16n tick) + scale re-harmonizer
-│   ├── DrumMachine.ts         # 4-Lane x 16-Step interactive drum sequencer + procedural synths + custom sample players
+│   ├── SynthEngine.ts         # Zero-leak native Web Audio graph: NativePolySynth (live + 4 tracks), DirectSamplePlayer + Master FX
+│   ├── LooperEngine.ts        # 4-Track quantized event recorder synced to Tone.Transport (16n tick) + zero-alloc tick loop
+│   ├── DrumMachine.ts         # 4-Lane x 16-Step drum sequencer + studio pre-rendered AudioBuffer synths + custom sample players
 │   ├── PitchDetector.ts       # Time-domain NSDF autocorrelation f0 pitch detector, silence trimmer & peak normalizer
-│   ├── SamplerEngine.ts       # Multi-Voice library manager, 30 factory voices, mic recording, file decoding, key-paint
+│   ├── SamplerEngine.ts       # Multi-Voice library manager, O(1) voice lookup map, deduplicated init & debounced IndexedDB save
 │   ├── VoiceStorage.ts        # IndexedDB persistence layer for recorded voice buffers and keyVoiceMap
 │   ├── AuraKeysHarness.ts     # Autonomous AI Diagnostic Harness (Tests 1-6), polyphony stress testing & acoustic RMS/clip analysis
 │   ├── scales.ts              # Mood scales, note calculation, and 3-row QWERTY code mapping
@@ -42,12 +42,12 @@ src/
 ├── components/
 │   ├── TopBar.tsx             # Presets [5-9, 0], VOICE STUDIO & MAPPER, AI TEST button, Key/Scale, BPM, Bars, Export
 │   ├── AIDiagnosticModal.tsx  # Self-test runner modal: single-note hold, polyphony capture, clock drift, multi-voice verification
-│   ├── LooperStation.tsx      # 4-Track visual looper cards with timeline grid, moving playhead, Rec/Ovd/Mute/Clear
+│   ├── LooperStation.tsx      # Memoized 4-Track visual looper cards with isolated playhead layer, Rec/Ovd/Mute/Clear
 │   ├── BackingBeatBar.tsx     # Beat selector, 16-STEP SEQ toggle, PAD REC toggle, and live hit pads
 │   ├── DrumSequencerPanel.tsx # Expandable 4x16 interactive step grid, velocity accents, per-lane mute/vol & sample badge
 │   ├── SamplerStudioModal.tsx # Multi-Voice Studio & Key Mapper modal, waveform display, root pitch selector, and row mappers
-│   ├── VisualizerAndXY.tsx    # 60fps waveform canvas (shadowBlur-free CPU optimized) + 2D XY Mood Pad + 4 Macros
-│   ├── KeyboardGrid.tsx       # React.memo visual keyboard with multi-voice color badges, active key glow, and paint mode
+│   ├── VisualizerAndXY.tsx    # 30fps throttled waveform canvas (idle-silence bypass) + 2D XY Mood Pad + 4 Macros
+│   ├── KeyboardGrid.tsx       # Per-key React.memo visual keyboard with O(1) multi-voice color badges and paint mode
 │   └── AudioUnlockModal.tsx   # Initial Web Audio unlock modal (Tone.start())
 ├── hooks/
 │   └── usePCKeyboard.ts       # Global keydown/keyup listener with rAF batched activeKey updates and repeat rejection
@@ -71,6 +71,16 @@ src/
 ---
 
 ## 5. Changelog
+- **2026-10-24 (v2.5.10)**: Docked Voice Palette Bar, 1-Click Row/Keyboard Fills & Inline Voice Renaming.
+  - **Docked Voice Palette Bar (`KeyboardGrid.tsx`, `SamplerEngine.ts`)**: Added an always-accessible voice brush & quick-mapper bar directly above the keyboard whenever Preset `[0]` (`Multi-Voice`) or Paint Mode is active. Users can switch voice brushes (`#docked-voice-chip-*`), toggle click/swipe painting (`#btn-docked-toggle-paint`), drag across keys to swipe-paint, or click **`[FILL ALL 30 KEYS]`**, **`[Fill High]`**, **`[Fill Mid]`**, **`[Fill Bass]`**, **`[30-Word Map]`**, or **`[Clear]`** directly on the main screen without modal hopping.
+  - **Inline Voice Renaming (`SamplerStudioModal.tsx`, `KeyboardGrid.tsx`, `SamplerEngine.ts`)**: Added `SamplerEngine.renameVoice()` and inline rename controls (`#btn-rename-voice-*`, `#btn-docked-rename-voice`, `#btn-feedback-rename-now`). Clicking a voice name or pencil icon opens an inline text input (`Enter` to save, `Esc` to cancel) that updates all keyboard key badges and IndexedDB immediately.
+  - **Top-of-Library Placement (`SamplerEngine.ts`)**: Newly recorded microphone phrases and uploaded audio files are inserted at index 0 (`unshift`) so they appear first in both the Docked Voice Palette Bar and Voice Studio modal.
+- **2026-10-24 (v2.5.9)**: Low-Spec Laptop Performance & Native Web Audio Engine Overhaul.
+  - **Eliminated Tone.js v14 `Oscillator._start` Signal Fan-Out Leak (`SynthEngine.ts`, `DrumMachine.ts`)**: Bypassed Tone.js `PolySynth(Tone.Synth)`, `MembraneSynth`, `NoiseSynth`, and 12-oscillator `MetalSynth` which leaked `Tone.Signal` -> `AudioParam` references on every note/drum trigger and caused progressive audio thread crackling after 1–2 minutes of play.
+  - **Zero-Leak `NativePolySynth` & `DirectSamplePlayer` (`SynthEngine.ts`)**: Built direct C++ Web Audio `OscillatorNode` + `GainNode` ADSR polyphonic synths (unison detuned saw, sub-octave triangle, FM sine, warm triangle) and direct `AudioBufferSourceNode` sample players with 0 idle nodes, click-free 5ms–8ms micro-fades, complete `.disconnect()` cleanup in `onended`, and O(1) cached frequency/MIDI lookups.
+  - **Pre-Rendered Studio Drum Buffers (`DrumMachine.ts`)**: Replaced 11 persistent Tone.js drum synths (~75 continuous nodes) with studio-grade pre-rendered `AudioBuffer`s synthesized at startup (`< 2ms`) and triggered via lightweight `AudioBufferSourceNode`s with 5ms choke.
+  - **Master Bus Pitch Stability & CPU Reduction (`SynthEngine.ts`)**: Removed the always-on series `Tone.Chorus` (eliminating 1.5Hz LFO pitch wobble on synths, bass, and vocals) and shortened `Tone.Reverb` IR decay (`2.0s` -> `1.1s`, ~45% lower convolution CPU).
+  - **React & GPU Rendering Optimization (`LooperStation.tsx`, `KeyboardGrid.tsx`, `VisualizerAndXY.tsx`, `App.tsx`)**: Isolated 16th-note playheads from static timeline grids via `React.memo`, added per-key `KeyboardKeyButton` memoization with O(1) `Map` lookups, throttled canvas visualizer to 30fps with an idle-silence fast path, and removed 11 redundant `backdrop-blur` GPU layers.
 - **2026-10-24 (v2.5.8)**: Official GitHub Repository & Clean Source Release.
   - **GitHub Remote (`https://github.com/zak-yn/aurakeys-studio`)**: Created public repository under `zak-yn`, initialized Git tracking on `main` branch, and pushed all core source files and 30 vocal sample assets.
   - **Repository Documentation**: Authored comprehensive `README.md` with visual badges, performance keymaps, audio architecture, and setup instructions, along with clean `.gitignore`.

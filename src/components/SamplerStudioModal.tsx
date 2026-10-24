@@ -15,6 +15,7 @@ import {
   Plus,
   RotateCcw,
   Clock,
+  Pencil,
 } from 'lucide-react';
 import {
   RegisteredVoice,
@@ -66,6 +67,11 @@ export const SamplerStudioModal: React.FC<SamplerStudioModalProps> = ({
   const [newVoiceName, setNewVoiceName] = useState('My Vocal Phrase');
   const [feedback, setFeedback] = useState<string | null>(null);
 
+  // Inline Voice Renaming State
+  const [editingVoiceId, setEditingVoiceId] = useState<string | null>(null);
+  const [editingVoiceName, setEditingVoiceName] = useState<string>('');
+  const renameInputRef = useRef<HTMLInputElement | null>(null);
+
   // Studio Pre-roll Count-in State
   const [countInSeconds, setCountInSeconds] = useState<3 | 1 | 0>(3);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -110,6 +116,7 @@ export const SamplerStudioModal: React.FC<SamplerStudioModalProps> = ({
   }, []);
 
   useEffect(() => {
+    if (!isOpen) return;
     const unsubVoices = engine.subscribeVoices((newVoices, newMap) => {
       setVoices([...newVoices]);
       setKeyVoiceMap({ ...newMap });
@@ -123,7 +130,7 @@ export const SamplerStudioModal: React.FC<SamplerStudioModalProps> = ({
       unsubVoices();
       unsubMic();
     };
-  }, [selectedVoiceId]);
+  }, [isOpen, selectedVoiceId]);
 
   useEffect(() => {
     let timer: any;
@@ -236,7 +243,36 @@ export const SamplerStudioModal: React.FC<SamplerStudioModalProps> = ({
     setVoices([...engine.voices]);
     setKeyVoiceMap({ ...engine.keyVoiceMap });
     setSelectedVoiceId(engine.voices[0]?.id || '');
+    setEditingVoiceId(null);
     setFeedback('Reset to default Studio Voices & key maps.');
+  };
+
+  const handleStartRename = (voice: RegisteredVoice, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setSelectedVoiceId(voice.id);
+    setEditingVoiceId(voice.id);
+    setEditingVoiceName(voice.name);
+    requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+  };
+
+  const handleSaveRename = (voiceId: string, e?: React.MouseEvent | React.FormEvent) => {
+    if (e) e.stopPropagation();
+    const trimmed = editingVoiceName.trim();
+    if (trimmed) {
+      const updated = engine.renameVoice(voiceId, trimmed);
+      if (updated) {
+        setFeedback(`Renamed voice to "${trimmed}"!`);
+      }
+    }
+    setEditingVoiceId(null);
+  };
+
+  const handleCancelRename = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setEditingVoiceId(null);
   };
 
   return (
@@ -476,14 +512,40 @@ export const SamplerStudioModal: React.FC<SamplerStudioModalProps> = ({
                   <span className="font-semibold">{feedback}</span>
                 </div>
                 {currentVoice && (
-                  <button
-                    id="btn-feedback-paint-now"
-                    onClick={() => handlePaintToKeyboard(currentVoice.id)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-500 hover:bg-pink-600 text-white font-bold text-xs transition-colors shrink-0 cursor-pointer shadow-md shadow-pink-500/20"
-                  >
-                    <Paintbrush className="w-3.5 h-3.5" />
-                    <span>PAINT "{currentVoice.name.slice(0, 16)}" TO KEYS</span>
-                  </button>
+                  <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+                    <button
+                      id="btn-feedback-rename-now"
+                      onClick={(e) => handleStartRename(currentVoice, e)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-pink-200 font-bold text-xs transition-colors cursor-pointer border border-pink-400/30"
+                      title="Rename this voice"
+                    >
+                      <Pencil className="w-3.5 h-3.5" />
+                      <span>RENAME</span>
+                    </button>
+                    <button
+                      id="btn-feedback-fill-all-now"
+                      onClick={() => {
+                        engine.assignKeysToVoice(
+                          [...ROW_TOP, ...ROW_MID, ...ROW_BOT],
+                          currentVoice.id
+                        );
+                        onSelectSamplerPreset();
+                        onClose();
+                      }}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-slate-950 font-bold text-xs transition-colors shrink-0 cursor-pointer"
+                      title="Map this voice across all 30 keys and start playing immediately"
+                    >
+                      <span>FILL ALL 30 KEYS &amp; PLAY</span>
+                    </button>
+                    <button
+                      id="btn-feedback-paint-now"
+                      onClick={() => handlePaintToKeyboard(currentVoice.id)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-pink-500 hover:bg-pink-600 text-white font-bold text-xs transition-colors shrink-0 cursor-pointer shadow-md shadow-pink-500/20"
+                    >
+                      <Paintbrush className="w-3.5 h-3.5" />
+                      <span>PAINT TO KEYS</span>
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -508,40 +570,100 @@ export const SamplerStudioModal: React.FC<SamplerStudioModalProps> = ({
                   >
                     <div>
                       {/* Top Bar of Card */}
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="w-3 h-3 rounded-full shrink-0"
-                            style={{ backgroundColor: voice.color }}
-                          />
-                          <span className="font-mono text-xs font-bold text-white">
-                            {voice.name}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              engine.previewVoice(voice.id);
-                            }}
-                            className="p-1 rounded bg-white/5 hover:bg-white/15 text-cyan-300"
-                            title="Audition Voice"
+                      <div className="flex items-center justify-between mb-2 gap-2">
+                        {editingVoiceId === voice.id ? (
+                          <div
+                            className="flex items-center gap-1 flex-1 min-w-0"
+                            onClick={(e) => e.stopPropagation()}
                           >
-                            <Play className="w-3 h-3 fill-cyan-300" />
-                          </button>
-                          {voices.length > 1 && (
-                            <button
-                              onClick={(e) => {
+                            <span
+                              className="w-3 h-3 rounded-full shrink-0"
+                              style={{ backgroundColor: voice.color }}
+                            />
+                            <input
+                              ref={renameInputRef}
+                              id={`input-rename-voice-${voice.id}`}
+                              type="text"
+                              value={editingVoiceName}
+                              maxLength={28}
+                              onChange={(e) => setEditingVoiceName(e.target.value)}
+                              onKeyDown={(e) => {
                                 e.stopPropagation();
-                                engine.deleteVoice(voice.id);
+                                if (e.key === 'Enter') {
+                                  handleSaveRename(voice.id);
+                                } else if (e.key === 'Escape') {
+                                  handleCancelRename();
+                                }
                               }}
-                              className="p-1 rounded bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400"
-                              title="Delete Voice"
+                              className="flex-1 min-w-0 bg-black/80 border border-pink-400/80 rounded px-2 py-0.5 font-mono text-xs font-bold text-white focus:outline-none"
+                              placeholder="Enter voice name..."
+                            />
+                            <button
+                              id={`btn-save-voice-name-${voice.id}`}
+                              onClick={(e) => handleSaveRename(voice.id, e)}
+                              className="p-1 rounded bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 shrink-0 cursor-pointer"
+                              title="Save Voice Name (Enter)"
                             >
-                              <Trash2 className="w-3 h-3" />
+                              <Check className="w-3 h-3" />
                             </button>
-                          )}
-                        </div>
+                            <button
+                              id={`btn-cancel-voice-name-${voice.id}`}
+                              onClick={(e) => handleCancelRename(e)}
+                              className="p-1 rounded bg-white/5 hover:bg-white/15 text-slate-400 hover:text-white shrink-0 cursor-pointer"
+                              title="Cancel Rename (Esc)"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ) : (
+                          <>
+                            <div
+                              className="flex items-center gap-2 min-w-0 group/title"
+                              onClick={(e) => handleStartRename(voice, e)}
+                              title="Click to rename voice"
+                            >
+                              <span
+                                className="w-3 h-3 rounded-full shrink-0"
+                                style={{ backgroundColor: voice.color }}
+                              />
+                              <span className="font-mono text-xs font-bold text-white truncate group-hover/title:text-pink-300 transition-colors">
+                                {voice.name}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1 shrink-0">
+                              <button
+                                id={`btn-rename-voice-${voice.id}`}
+                                onClick={(e) => handleStartRename(voice, e)}
+                                className="p-1 rounded bg-white/5 hover:bg-pink-500/20 text-slate-400 hover:text-pink-300 cursor-pointer"
+                                title="Edit Voice Name"
+                              >
+                                <Pencil className="w-3 h-3" />
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  engine.previewVoice(voice.id);
+                                }}
+                                className="p-1 rounded bg-white/5 hover:bg-white/15 text-cyan-300 cursor-pointer"
+                                title="Audition Voice"
+                              >
+                                <Play className="w-3 h-3 fill-cyan-300" />
+                              </button>
+                              {voices.length > 1 && (
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    engine.deleteVoice(voice.id);
+                                  }}
+                                  className="p-1 rounded bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-400 cursor-pointer"
+                                  title="Delete Voice"
+                                >
+                                  <Trash2 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </>
+                        )}
                       </div>
 
                       {/* Waveform Strip */}

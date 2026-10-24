@@ -19,36 +19,32 @@ const VisualizerAndXYComponent: React.FC<VisualizerAndXYProps> = ({
   const xyPadRef = useRef<HTMLDivElement | null>(null);
   const [isDraggingXY, setIsDraggingXY] = useState(false);
 
-  // 60fps Waveform Visualizer
+  // Idle-Aware Hardware-Accelerated Waveform Visualizer
   useEffect(() => {
     if (!isUnlocked) return;
 
     let animId: number;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
 
     const synthEngine = SynthEngine.getInstance();
-    // Pre-allocated static buffer to eliminate 60fps GC allocations
+    // Pre-allocated static buffer to eliminate GC allocations
     const sampleBuffer = new Float32Array(256);
+    let wasSilentFrames = 0;
+    let lastDrawTime = 0;
 
-    const draw = () => {
+    // Initial clear
+    ctx.fillStyle = '#06080d';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const draw = (now: number) => {
       animId = requestAnimationFrame(draw);
 
-      const width = canvas.width;
-      const height = canvas.height;
-
-      ctx.fillStyle = 'rgba(10, 12, 18, 0.45)';
-      ctx.fillRect(0, 0, width, height);
-
-      // Grid line
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(0, height / 2);
-      ctx.lineTo(width, height / 2);
-      ctx.stroke();
+      // Throttle to ~30fps (32ms) to free CPU/GPU headroom for real-time audio on laptops
+      if (now - lastDrawTime < 32) return;
+      lastDrawTime = now;
 
       if (!synthEngine.isReady || !synthEngine.analyser) {
         return;
@@ -63,21 +59,60 @@ const VisualizerAndXYComponent: React.FC<VisualizerAndXYProps> = ({
         if (temp) sampleBuffer.set(temp.subarray(0, sampleBuffer.length));
       }
 
-      // High-performance direct stroke without expensive CPU shadowBlur software rasterization
+      // Check peak energy to skip redundant canvas rasterization when audio is completely idle
+      let maxAbs = 0;
+      for (let i = 0; i < sampleBuffer.length; i += 4) {
+        const a = Math.abs(sampleBuffer[i]);
+        if (a > maxAbs) maxAbs = a;
+      }
+
+      const width = canvas.width;
+      const height = canvas.height;
+      const midY = height / 2;
+
+      if (maxAbs < 0.0015) {
+        wasSilentFrames++;
+        if (wasSilentFrames > 4) {
+          // Already drew clean idle baseline; skip GPU rasterization until sound resumes
+          return;
+        }
+        ctx.fillStyle = '#06080d';
+        ctx.fillRect(0, 0, width, height);
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, midY);
+        ctx.lineTo(width, midY);
+        ctx.stroke();
+        return;
+      }
+
+      wasSilentFrames = 0;
+
+      ctx.fillStyle = '#06080d';
+      ctx.fillRect(0, 0, width, height);
+
+      // Center reference hairline
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, midY);
+      ctx.lineTo(width, midY);
+      ctx.stroke();
+
+      // Waveform path (64 vertices for crisp rendering with minimal CPU stroke overhead)
       ctx.strokeStyle = '#38bdf8';
       ctx.lineWidth = 1.75;
-
       ctx.beginPath();
-      const step = 2;
+
+      const step = 4;
       const count = sampleBuffer.length / step;
       const sliceWidth = width / count;
       let x = 0;
 
       for (let i = 0; i < sampleBuffer.length; i += step) {
         const v = sampleBuffer[i];
-        // v is typically -1.0 to 1.0
-        const y = (v * 0.75 + 1) * (height / 2);
-
+        const y = (v * 0.75 + 1) * midY;
         if (i === 0) {
           ctx.moveTo(x, y);
         } else {
@@ -89,7 +124,7 @@ const VisualizerAndXYComponent: React.FC<VisualizerAndXYProps> = ({
       ctx.stroke();
     };
 
-    draw();
+    animId = requestAnimationFrame(draw);
 
     return () => {
       cancelAnimationFrame(animId);
@@ -137,24 +172,24 @@ const VisualizerAndXYComponent: React.FC<VisualizerAndXYProps> = ({
   return (
     <div className="flex flex-col gap-3 h-full">
       {/* 1. Waveform Visualizer Canvas */}
-      <div className="rounded-xl border border-white/5 bg-[#10121a]/90 p-2.5 backdrop-blur-sm">
+      <div className="rounded-xl border border-white/5 bg-[#10121a] p-2.5">
         <div className="flex items-center justify-between text-xs font-mono text-slate-400 mb-1.5">
           <div className="flex items-center gap-1.5">
             <Activity className="h-3.5 w-3.5 text-cyan-400" />
             <span className="font-semibold text-slate-200">MASTER SPECTRUM</span>
           </div>
-          <span className="text-[10px] text-cyan-400/80 font-mono">60 FPS ANALYSER</span>
+          <span className="text-[10px] text-cyan-400/80 font-mono">REAL-TIME ANALYSER</span>
         </div>
         <canvas
           ref={canvasRef}
-          width={400}
-          height={80}
-          className="w-full h-20 rounded-lg bg-black/60 border border-white/5"
+          width={360}
+          height={76}
+          className="w-full h-20 rounded-lg bg-[#06080d] border border-white/5"
         />
       </div>
 
       {/* 2. 2D XY Mood Pad */}
-      <div className="rounded-xl border border-white/5 bg-[#10121a]/90 p-2.5 backdrop-blur-sm flex flex-col gap-2">
+      <div className="rounded-xl border border-white/5 bg-[#10121a] p-2.5 flex flex-col gap-2">
         <div className="flex items-center justify-between text-xs font-mono text-slate-400">
           <div className="flex items-center gap-1.5">
             <Compass className="h-3.5 w-3.5 text-purple-400" />
@@ -172,13 +207,21 @@ const VisualizerAndXYComponent: React.FC<VisualizerAndXYProps> = ({
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
-          className="relative h-28 w-full rounded-lg bg-gradient-to-tr from-slate-950 via-[#131622] to-slate-900 border border-white/10 cursor-crosshair select-none overflow-hidden touch-none"
+          className="relative h-28 w-full rounded-lg bg-[#0b0d14] border border-white/10 cursor-crosshair select-none overflow-hidden touch-none"
         >
           {/* Subtle Quadrant Labels */}
-          <span className="absolute top-1.5 left-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">Dreamy Lush</span>
-          <span className="absolute top-1.5 right-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">Bright Cosmic</span>
-          <span className="absolute bottom-1.5 left-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">Warm Intimate</span>
-          <span className="absolute bottom-1.5 right-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">Crisp Direct</span>
+          <span className="absolute top-1.5 left-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+            Dreamy Lush
+          </span>
+          <span className="absolute top-1.5 right-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+            Bright Cosmic
+          </span>
+          <span className="absolute bottom-1.5 left-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+            Warm Intimate
+          </span>
+          <span className="absolute bottom-1.5 right-2 text-[9px] font-mono text-slate-500 uppercase tracking-wider">
+            Crisp Direct
+          </span>
 
           {/* Crosshair Center Lines */}
           <div className="absolute inset-x-0 top-1/2 border-t border-white/[0.04] pointer-events-none" />
@@ -186,11 +229,13 @@ const VisualizerAndXYComponent: React.FC<VisualizerAndXYProps> = ({
 
           {/* Interactive Puck */}
           <div
-            className="absolute w-5 h-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-cyan-400 shadow-[0_0_12px_#06b6d4] pointer-events-none transition-transform duration-75"
+            className="absolute w-5 h-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-cyan-400 pointer-events-none"
             style={{
               left: `${macros.warmth}%`,
               top: `${100 - macros.space}%`,
-              transform: isDraggingXY ? 'translate(-50%, -50%) scale(1.2)' : 'translate(-50%, -50%)',
+              transform: isDraggingXY
+                ? 'translate(-50%, -50%) scale(1.15)'
+                : 'translate(-50%, -50%)',
             }}
           >
             <div className="w-1.5 h-1.5 rounded-full bg-white absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2" />
@@ -204,7 +249,7 @@ const VisualizerAndXYComponent: React.FC<VisualizerAndXYProps> = ({
       </div>
 
       {/* 3. Four Intuitive Macro Sliders */}
-      <div className="rounded-xl border border-white/5 bg-[#10121a]/90 p-2.5 backdrop-blur-sm">
+      <div className="rounded-xl border border-white/5 bg-[#10121a] p-2.5">
         <div className="flex items-center gap-1.5 text-xs font-mono text-slate-400 mb-2">
           <Sliders className="h-3.5 w-3.5 text-emerald-400" />
           <span className="font-semibold text-slate-200">MACRO SOUND CONTROLS</span>

@@ -28,7 +28,7 @@ const DrumSequencerPanelComponent: React.FC<DrumSequencerPanelProps> = ({
   onResetPresetPattern,
 }) => {
   return (
-    <div className="rounded-xl border border-cyan-500/20 bg-[#0d1017]/95 p-3 backdrop-blur-md shadow-lg">
+    <div className="rounded-xl border border-cyan-500/20 bg-[#0d1017] p-3">
       {/* Header Row */}
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2.5 pb-2 border-b border-white/5 text-xs font-mono">
         <div className="flex items-center gap-2">

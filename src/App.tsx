@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { SynthEngine, MacroControls } from './audio/SynthEngine';
 import { LooperEngine, LooperTrack } from './audio/LooperEngine';
 import { DrumMachine, DrumStyle, DrumLaneState, DrumLaneId } from './audio/DrumMachine';
@@ -16,7 +16,7 @@ import { VisualizerAndXY } from './components/VisualizerAndXY';
 import { KeyboardGrid } from './components/KeyboardGrid';
 import { AudioUnlockModal } from './components/AudioUnlockModal';
 import { AIDiagnosticModal } from './components/AIDiagnosticModal';
-import { AuraKeysHarness } from './audio/AuraKeysHarness';
+import './audio/AuraKeysHarness';
 
 export const App: React.FC = () => {
   const [isUnlocked, setIsUnlocked] = useState(false);
@@ -61,6 +61,7 @@ export const App: React.FC = () => {
     snap: 40,
     echo: 20,
   });
+  const macroRafPendingRef = useRef(false);
 
   // Scale Keyboard Mapping
   const keyboardMap = useMemo(() => {
@@ -75,7 +76,7 @@ export const App: React.FC = () => {
   }, [keyboardMap, isUnlocked]);
 
   // Unlock Audio Engine
-  const handleUnlockAudio = async () => {
+  const handleUnlockAudio = useCallback(async () => {
     const synthEngine = SynthEngine.getInstance();
     await synthEngine.init();
 
@@ -118,7 +119,7 @@ export const App: React.FC = () => {
     looperEngine.start();
     setIsPlaying(true);
     setIsUnlocked(true);
-  };
+  }, []);
 
   // Preset Selection
   const handleSelectPreset = useCallback((index: number) => {
@@ -128,6 +129,10 @@ export const App: React.FC = () => {
       SynthEngine.getInstance().setLivePreset(preset);
     }
   }, []);
+
+  const handleSelectSamplerPreset = useCallback(() => {
+    handleSelectPreset(5);
+  }, [handleSelectPreset]);
 
   // Scale & Root
   const handleSelectScale = useCallback((scale: ScaleDef) => {
@@ -169,96 +174,131 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  // Looper Actions
-  const handleSelectTrack = (index: number) => {
+  // Looper Actions (all memoized so LooperStation only re-renders when needed)
+  const handleSelectTrack = useCallback((index: number) => {
     setSelectedTrackIndex(index);
     LooperEngine.getInstance().selectTrack(index);
-  };
+  }, []);
 
-  const handleToggleRecord = (index: number) => {
+  const handleToggleRecord = useCallback((index: number) => {
     LooperEngine.getInstance().toggleRecordTrack(index);
     setSelectedTrackIndex(index);
     setIsPlaying(true);
-  };
+  }, []);
 
-  const handleToggleTrackMute = (index: number) => {
+  const handleToggleTrackMute = useCallback((index: number) => {
     LooperEngine.getInstance().toggleMuteTrack(index);
-  };
+  }, []);
 
-  const handleClearTrack = (index: number) => {
+  const handleClearTrack = useCallback((index: number) => {
     LooperEngine.getInstance().clearTrack(index);
-  };
+  }, []);
 
-  const handleChangeTrackVolume = (index: number, volDb: number) => {
+  const handleChangeTrackVolume = useCallback((index: number, volDb: number) => {
     LooperEngine.getInstance().setTrackVolume(index, volDb);
-  };
+  }, []);
 
-  // Drum Machine & Step Sequencer Actions
-  const handleSelectDrumStyle = (style: DrumStyle) => {
+  // Drum Machine & Step Sequencer Actions (all memoized so BackingBeatBar never re-renders on step ticks)
+  const handleSelectDrumStyle = useCallback((style: DrumStyle) => {
     setDrumStyle(style);
     DrumMachine.getInstance().setStyle(style);
-  };
+  }, []);
 
-  const handleToggleDrumMute = () => {
+  const handleToggleDrumMute = useCallback(() => {
     const isMuted = DrumMachine.getInstance().toggleMute();
     setIsDrumMuted(isMuted);
-  };
+  }, []);
 
-  const handleChangeDrumVolume = (volDb: number) => {
+  const handleChangeDrumVolume = useCallback((volDb: number) => {
     setDrumVolumeDb(volDb);
     DrumMachine.getInstance().setVolume(volDb);
-  };
+  }, []);
 
-  const handleToggleDrumStep = (laneIdx: number, stepIdx: number) => {
+  const handleToggleSequencer = useCallback(() => {
+    setIsSequencerOpen((prev) => !prev);
+  }, []);
+
+  const handleToggleDrumStep = useCallback((laneIdx: number, stepIdx: number) => {
     DrumMachine.getInstance().toggleStep(laneIdx, stepIdx);
-  };
+  }, []);
 
-  const handleToggleDrumLaneMute = (laneIdx: number) => {
+  const handleToggleDrumLaneMute = useCallback((laneIdx: number) => {
     DrumMachine.getInstance().toggleLaneMute(laneIdx);
-  };
+  }, []);
 
-  const handleChangeDrumLaneVolume = (laneIdx: number, volDb: number) => {
+  const handleChangeDrumLaneVolume = useCallback((laneIdx: number, volDb: number) => {
     DrumMachine.getInstance().setLaneVolume(laneIdx, volDb);
-  };
+  }, []);
 
   const handleTriggerDrumPad = useCallback((laneIdx: number) => {
     DrumMachine.getInstance().triggerLivePad(laneIdx);
   }, []);
 
-  const handleToggleDrumRecording = () => {
+  const handleToggleDrumRecording = useCallback(() => {
     const dm = DrumMachine.getInstance();
     dm.isDrumRecording = !dm.isDrumRecording;
     setIsDrumRecording(dm.isDrumRecording);
-  };
+  }, []);
 
-  const handleClearCustomDrumSample = (laneId: DrumLaneId) => {
+  const handleClearCustomDrumSample = useCallback((laneId: DrumLaneId) => {
     DrumMachine.getInstance().clearCustomLaneSample(laneId);
-  };
+  }, []);
 
-  const handleClearAllDrumSteps = () => {
+  const handleClearAllDrumSteps = useCallback(() => {
     DrumMachine.getInstance().clearAllSteps();
-  };
+  }, []);
 
-  const handleResetDrumPattern = () => {
-    DrumMachine.getInstance().setStyle(drumStyle);
-  };
+  const handleResetDrumPattern = useCallback(() => {
+    DrumMachine.getInstance().setStyle(DrumMachine.getInstance().currentStyle);
+  }, []);
 
-  // Sampler Actions
-  const handleAssignSampleToDrumLane = (laneId: DrumLaneId) => {
+  // Sampler & Modal Actions
+  const handleAssignSampleToDrumLane = useCallback((laneId: DrumLaneId) => {
     SamplerEngine.getInstance().assignCurrentSampleToDrumLane(laneId);
     setIsSequencerOpen(true);
-  };
-
-  // Sound Shaping Macros & XY
-  const handleChangeMacro = useCallback((key: keyof MacroControls, val: number) => {
-    SynthEngine.getInstance().setMacro(key, val);
-    setMacros({ ...SynthEngine.getInstance().macros });
   }, []);
 
-  const handleXYChange = useCallback((x: number, y: number) => {
-    SynthEngine.getInstance().setXYMood(x, y);
-    setMacros({ ...SynthEngine.getInstance().macros });
+  const handleOpenSamplerModal = useCallback(() => {
+    setIsSamplerModalOpen(true);
   }, []);
+
+  const handleCloseSamplerModal = useCallback(() => {
+    setIsSamplerModalOpen(false);
+  }, []);
+
+  const handleOpenDiagnosticModal = useCallback(() => {
+    setIsDiagnosticModalOpen(true);
+  }, []);
+
+  const handleCloseDiagnosticModal = useCallback(() => {
+    setIsDiagnosticModalOpen(false);
+  }, []);
+
+  // Sound Shaping Macros & XY (immediate audio parameter update + rAF-coalesced React state update)
+  const scheduleMacroStateSync = useCallback(() => {
+    if (macroRafPendingRef.current) return;
+    macroRafPendingRef.current = true;
+    requestAnimationFrame(() => {
+      macroRafPendingRef.current = false;
+      setMacros({ ...SynthEngine.getInstance().macros });
+    });
+  }, []);
+
+  const handleChangeMacro = useCallback(
+    (key: keyof MacroControls, val: number) => {
+      SynthEngine.getInstance().setMacro(key, val);
+      scheduleMacroStateSync();
+    },
+    [scheduleMacroStateSync]
+  );
+
+  const handleXYChange = useCallback(
+    (x: number, y: number) => {
+      SynthEngine.getInstance().setXYMood(x, y);
+      scheduleMacroStateSync();
+    },
+    [scheduleMacroStateSync]
+  );
 
   // Master Audio Export
   const handleStartExport = useCallback(async () => {
@@ -277,12 +317,15 @@ export const App: React.FC = () => {
     setKeyVoiceMap({ ...SamplerEngine.getInstance().keyVoiceMap });
   }, []);
 
-  const handleStartPaintMode = useCallback((voiceId: string) => {
-    SamplerEngine.getInstance().setPaintVoice(voiceId);
-    setActivePaintVoiceId(voiceId);
-    setIsPaintMode(true);
-    handleSelectPreset(5); // Automatically select Multi-Voice Sampler (0)
-  }, [handleSelectPreset]);
+  const handleStartPaintMode = useCallback(
+    (voiceId: string) => {
+      SamplerEngine.getInstance().setPaintVoice(voiceId);
+      setActivePaintVoiceId(voiceId);
+      setIsPaintMode(true);
+      handleSelectPreset(5); // Automatically select Multi-Voice Sampler (0)
+    },
+    [handleSelectPreset]
+  );
 
   const handleExitPaintMode = useCallback(() => {
     setIsPaintMode(false);
@@ -314,10 +357,10 @@ export const App: React.FC = () => {
       {/* 2. Multi-Voice Studio & Key Mapper Modal */}
       <SamplerStudioModal
         isOpen={isSamplerModalOpen}
-        onClose={() => setIsSamplerModalOpen(false)}
+        onClose={handleCloseSamplerModal}
         currentRoot={currentRoot}
         currentScaleName={currentScale.name}
-        onSelectSamplerPreset={() => handleSelectPreset(5)}
+        onSelectSamplerPreset={handleSelectSamplerPreset}
         onAssignToDrumLane={handleAssignSampleToDrumLane}
         onStartPaintMode={handleStartPaintMode}
       />
@@ -325,7 +368,7 @@ export const App: React.FC = () => {
       {/* 3. AI Diagnostic & Automated Test Harness Modal */}
       <AIDiagnosticModal
         isOpen={isDiagnosticModalOpen}
-        onClose={() => setIsDiagnosticModalOpen(false)}
+        onClose={handleCloseDiagnosticModal}
       />
 
       {/* 4. Global Top Control Bar */}
@@ -347,11 +390,11 @@ export const App: React.FC = () => {
         onStartExport={handleStartExport}
         onStopExport={handleStopExport}
         currentSample={currentSample}
-        onOpenSamplerModal={() => setIsSamplerModalOpen(true)}
-        onOpenDiagnosticModal={() => setIsDiagnosticModalOpen(true)}
+        onOpenSamplerModal={handleOpenSamplerModal}
+        onOpenDiagnosticModal={handleOpenDiagnosticModal}
       />
 
-      {/* 4. Main Workspace Dashboard */}
+      {/* 5. Main Workspace Dashboard */}
       <main className="flex-1 px-3 py-2 flex flex-col gap-2 max-w-[1700px] w-full mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 flex-1 items-stretch">
           {/* Middle Left: 4-Track Live Looper Station + Backing Beat Bar + Interactive Drum Sequencer (65% = 8 cols) */}
@@ -377,7 +420,7 @@ export const App: React.FC = () => {
               onSelectStyle={handleSelectDrumStyle}
               onToggleMute={handleToggleDrumMute}
               onChangeVolume={handleChangeDrumVolume}
-              onToggleSequencer={() => setIsSequencerOpen((prev) => !prev)}
+              onToggleSequencer={handleToggleSequencer}
               onToggleDrumRecording={handleToggleDrumRecording}
               onTriggerPad={handleTriggerDrumPad}
             />
@@ -409,7 +452,7 @@ export const App: React.FC = () => {
           </div>
         </div>
 
-        {/* 5. Bottom Section: Interactive 3-Row Keyboard Grid with Voice Badges & Paint Mode */}
+        {/* 6. Bottom Section: Interactive 3-Row Keyboard Grid with Voice Badges & Paint Mode */}
         <KeyboardGrid
           keyboardMap={keyboardMap}
           activeKeys={activeKeys}
@@ -426,6 +469,7 @@ export const App: React.FC = () => {
           onPaintKey={handlePaintKey}
           onStartPaintMode={handleStartPaintMode}
           onExitPaintMode={handleExitPaintMode}
+          onOpenSamplerModal={handleOpenSamplerModal}
           isSamplerVoiceActive={currentPreset.isSamplerVoice}
         />
       </main>

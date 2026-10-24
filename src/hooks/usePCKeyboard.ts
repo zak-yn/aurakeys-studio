@@ -191,6 +191,11 @@ export function usePCKeyboard({
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+        return;
+      }
+
       const code = event.code;
 
       if (code === 'ShiftLeft' || code === 'ShiftRight') {

@@ -30,7 +30,7 @@ const BackingBeatBarComponent: React.FC<BackingBeatBarProps> = ({
   onTriggerPad,
 }) => {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2 bg-[#10121a]/90 border border-white/5 rounded-xl p-2.5 backdrop-blur-sm">
+    <div className="flex flex-wrap items-center justify-between gap-2 bg-[#10121a] border border-white/5 rounded-xl p-2.5">
       {/* Left: Drum Machine Label, Mute Button & Step Sequencer Drawer Toggle */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex items-center gap-1.5 text-xs font-mono font-semibold text-slate-300">
