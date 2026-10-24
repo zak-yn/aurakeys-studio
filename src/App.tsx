@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { SynthEngine, MacroControls } from './audio/SynthEngine';
-import { LooperEngine, LooperTrack } from './audio/LooperEngine';
+import { LooperEngine, LooperTrack, QuantizeMode } from './audio/LooperEngine';
 import { DrumMachine, DrumStyle, DrumLaneState, DrumLaneId } from './audio/DrumMachine';
 import { SamplerEngine, CustomSampleData, RegisteredVoice } from './audio/SamplerEngine';
 import { SCALES, ScaleDef, buildKeyboardMap } from './audio/scales';
@@ -256,6 +256,29 @@ export const App: React.FC = () => {
     LooperEngine.getInstance().setTrackPreset(trackIndex, preset);
   }, []);
 
+  const handleChangeTrackQuantize = useCallback((trackIndex: number, mode: QuantizeMode) => {
+    LooperEngine.getInstance().setTrackQuantizeMode(trackIndex, mode);
+  }, []);
+
+  const handleSnapTrackToGrid = useCallback((trackIndex: number) => {
+    LooperEngine.getInstance().snapTrackEventsToGrid(trackIndex, '16n');
+  }, []);
+
+  const handleNudgeTrackTiming = useCallback((trackIndex: number, deltaSteps: number) => {
+    LooperEngine.getInstance().nudgeTrackTiming(trackIndex, deltaSteps);
+  }, []);
+
+  const handleMoveNoteEvent = useCallback(
+    (trackIndex: number, eventId: string, targetRawStep: number) => {
+      LooperEngine.getInstance().moveNoteEvent(trackIndex, eventId, targetRawStep);
+    },
+    []
+  );
+
+  const handleDeleteNoteEvent = useCallback((trackIndex: number, eventId: string) => {
+    LooperEngine.getInstance().deleteNoteEvent(trackIndex, eventId);
+  }, []);
+
   // Drum Machine & Step Sequencer Actions
   const handleSelectDrumStyle = useCallback((style: DrumStyle) => {
     setDrumStyle(style);
@@ -493,6 +516,11 @@ export const App: React.FC = () => {
               onClearTrack={handleClearTrack}
               onChangeVolume={handleChangeTrackVolume}
               onChangeTrackPreset={handleChangeTrackPreset}
+              onChangeTrackQuantize={handleChangeTrackQuantize}
+              onSnapTrackToGrid={handleSnapTrackToGrid}
+              onNudgeTrackTiming={handleNudgeTrackTiming}
+              onMoveNoteEvent={handleMoveNoteEvent}
+              onDeleteNoteEvent={handleDeleteNoteEvent}
             />
 
             <BackingBeatBar

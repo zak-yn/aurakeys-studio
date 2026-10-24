@@ -1,6 +1,6 @@
 # AuraKeys Studio — Architectural Specification & Agent Guide
 
-Single Source of Truth for **AuraKeys Studio v2.6**: a polyphonic **Multi-Layer Hybrid Synthesizer (30+ Studio Presets & Custom Sound Designer)**, **Multi-Voice Keymapping Sampler**, **Auto-Pitch Microphone & File Sampler**, **4-Lane × 16-Step Interactive Drum Machine**, and **4-Track Real-Time Quantized Loop Station** designed for solo keyboard play with zero music theory required.
+Single Source of Truth for **AuraKeys Studio v2.6.1**: a polyphonic **Multi-Layer Hybrid Synthesizer (30+ Studio Presets & Custom Sound Designer)**, **Multi-Voice Keymapping Sampler**, **Auto-Pitch Microphone & File Sampler**, **4-Lane × 16-Step Interactive Drum Machine**, and **4-Track Real-Time Quantized / Free-Timing Loop Station** designed for solo keyboard play with zero music theory required.
 
 ---
 
@@ -72,6 +72,10 @@ src/
 ---
 
 ## 5. Changelog
+- **2026-10-25 (v2.6.1)**: Looper Timing Quantize Modes (`1/16`, `1/8`, `1/4`, `Free As-Is`) & Post-Recording Note Timing Editor (`LooperEngine.ts`, `LooperStation.tsx`, `App.tsx`).
+  - **Dual Timing Capture (`rawStep` + Quantized `step`)**: Every recorded note now preserves both its exact floating-point human press timing (`rawStep`) and its grid-snapped step (`step`) plus sub-step micro-timing offset (`microOffsetSteps`), locked to the audio-clock playhead (`lastTickAudioTime`) with an anti-double-trigger guard.
+  - **Live & Post-Recording Quantize Selector (`#select-track-quantize-0..3`)**: Each track can switch between `GRID 1/16 (Auto-Snap)`, `GRID 1/8 (Auto-Snap)`, `GRID 1/4 (Beat Snap)`, and `FREE (As-Is Timing)` before or *after* recording, non-destructively re-computing all recorded notes from `rawStep`.
+  - **Interactive Timeline Note Dragging, Track Nudge & 1-Click Snap**: Added horizontal drag-to-retime directly on recorded note blocks (`RecordedEventsLayer`), right-click / `×` single-note deletion (`deleteNoteEvent`), per-track timing nudge buttons (`#btn-track-nudge-left-0..3`, `#btn-track-nudge-right-0..3`), and 1-click `#btn-track-snap-now-0..3` when in Free mode.
 - **2026-10-25 (v2.6)**: Multi-Layer Hybrid Synth Engine, 30+ Studio Presets, Synth Lab Sound Designer & Live Looper Instrument Swapper (`/grill-me` Blueprint).
   - **Multi-Layer Zero-Leak Hybrid Synth Engine (`SynthEngine.ts`)**: Upgraded `NativePolySynth` with 6 synthesis layers: Primary Oscillator (Unison Detune `fatsawtooth`/`fatsquare`/`fattriangle`, 2-Op FM `fmsine`/`fmtriangle`/`fmsawtooth`, Basic waveforms), Sub-Oscillator (`-1`/`-2` octaves), Shared Pink/White Hammer & Breath Noise Burst, Per-Voice Resonant `BiquadFilterNode` + Filter Envelope, Pitch Attack Bend (`pitchEnv`), and Vibrato LFO (`vibrato`), plus relative `SNAP` macro scaling that preserves each preset's crafted ADSR contour.
   - **30 Factory Studio Presets + Custom User Library (`presets.ts`)**: Built 30 studio presets across 6 categories (*Keys & E-Pianos*, *Bass & 808*, *Pads & Strings*, *Plucks & World*, *Leads & Winds*, *Bells & Mallet*) plus `Multi-Voice Sampler [0]` and `localStorage` persistence for custom patches and pinned `[5]`–`[9]` hotkey slots.
