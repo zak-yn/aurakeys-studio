@@ -1,10 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { Play, Square, Circle, Sparkles, Music2, Clock, Mic, Cpu } from 'lucide-react';
+import {
+  Play,
+  Square,
+  Circle,
+  Sparkles,
+  Music2,
+  Clock,
+  Mic,
+  Cpu,
+  Sliders,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import { SCALES, ROOT_NOTES, ScaleDef } from '../audio/scales';
 import { PRESETS, PresetConfig } from '../audio/presets';
 import { CustomSampleData } from '../audio/SamplerEngine';
 
 interface TopBarProps {
+  allPresets?: PresetConfig[];
   currentPreset: PresetConfig;
   onSelectPreset: (index: number) => void;
   currentScale: ScaleDef;
@@ -23,10 +36,12 @@ interface TopBarProps {
   onStopExport: () => Promise<void>;
   currentSample: CustomSampleData | null;
   onOpenSamplerModal: () => void;
+  onOpenSynthLabModal?: () => void;
   onOpenDiagnosticModal?: () => void;
 }
 
 const TopBarComponent: React.FC<TopBarProps> = ({
+  allPresets = PRESETS,
   currentPreset,
   onSelectPreset,
   currentScale,
@@ -45,6 +60,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
   onStopExport,
   currentSample,
   onOpenSamplerModal,
+  onOpenSynthLabModal,
   onOpenDiagnosticModal,
 }) => {
   const [isExporting, setIsExporting] = useState(false);
@@ -77,19 +93,31 @@ const TopBarComponent: React.FC<TopBarProps> = ({
     return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  const currentIdx = Math.max(
+    0,
+    allPresets.findIndex((p) => p.id === currentPreset.id)
+  );
+  // First 6 slots are the pinned hotkeys [5]-[9] and [0] Multi-Voice Sampler
+  const hotkeySlots = allPresets.slice(0, 6);
+
+  const handleStepPreset = (delta: number) => {
+    const nextIdx = (currentIdx + delta + allPresets.length) % allPresets.length;
+    onSelectPreset(nextIdx);
+  };
+
   return (
     <header className="w-full border-b border-white/[0.08] bg-[#0c0e14] px-4 py-2.5 flex flex-wrap items-center justify-between gap-2.5 text-xs select-none">
       {/* Brand & Transport Status */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
-          <div className="h-7 w-7 rounded-lg bg-gradient-to-tr from-cyan-500 to-indigo-500 flex items-center justify-center shadow-sm shadow-cyan-500/30">
-            <Music2 className="h-4 w-4 text-white" />
+          <div className="h-7 w-7 rounded-lg bg-[#161b29] border border-cyan-500/30 flex items-center justify-center">
+            <Music2 className="h-4 w-4 text-cyan-400" />
           </div>
           <div>
             <div className="flex items-center gap-1.5">
               <span className="font-bold tracking-tight text-white text-sm">AuraKeys</span>
               <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300 border border-cyan-500/20">
-                Studio v2
+                Studio v2.6
               </span>
             </div>
           </div>
@@ -101,7 +129,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           onClick={onTogglePlay}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono font-medium border transition-all cursor-pointer ${
             isPlaying
-              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300 shadow-sm shadow-amber-500/20'
+              ? 'bg-amber-500/15 border-amber-500/40 text-amber-300'
               : 'bg-white/[0.04] border-white/10 text-slate-300 hover:bg-white/[0.08]'
           }`}
           title="Master Transport Play / Pause [Space]"
@@ -123,35 +151,54 @@ const TopBarComponent: React.FC<TopBarProps> = ({
         </button>
       </div>
 
-      {/* Preset Bar (Hotkeys 5 - 9 & 0 for Sampler) + Mic Sample Studio Button */}
+      {/* All 30+ Presets Quick Browser (< Dropdown >) + Pinned Hotkeys [5-9, 0] + Synth Lab + Voice Studio */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        {/* Compact Preset Dropdown */}
-        <select
-          id="preset-dropdown"
-          value={PRESETS.findIndex((p) => p.id === currentPreset.id)}
-          onChange={(e) => {
-            onSelectPreset(parseInt(e.target.value, 10));
-            e.currentTarget.blur();
-          }}
-          className="bg-black/40 text-slate-300 border border-white/10 rounded px-2 py-1 focus:outline-none cursor-pointer"
-          title="Select Synth Preset"
-        >
-          {PRESETS.map((p, idx) => (
-            <option key={p.id} value={idx} className="bg-slate-900 text-white">
-              {p.name} ({p.category})
-            </option>
-          ))}
-        </select>
+        {/* < All 30+ Presets Stepper & Dropdown > */}
+        <div className="flex items-center bg-black/50 rounded-lg border border-white/10 p-0.5">
+          <button
+            id="btn-preset-prev"
+            onClick={() => handleStepPreset(-1)}
+            className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded cursor-pointer"
+            title="Previous Preset"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <select
+            id="preset-dropdown"
+            value={currentIdx}
+            onChange={(e) => {
+              onSelectPreset(parseInt(e.target.value, 10));
+              e.currentTarget.blur();
+            }}
+            className="bg-transparent text-white font-mono text-[11px] font-semibold px-1.5 py-0.5 focus:outline-none cursor-pointer max-w-[200px]"
+            title="Browse All 30+ Studio Presets & Custom Sounds"
+          >
+            {allPresets.map((p, idx) => (
+              <option key={p.id} value={idx} className="bg-slate-900 text-white">
+                {p.hotkeyLabel ? `[${p.hotkeyLabel}] ` : ''}
+                {p.name} · {p.category}
+              </option>
+            ))}
+          </select>
+          <button
+            id="btn-preset-next"
+            onClick={() => handleStepPreset(1)}
+            className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded cursor-pointer"
+            title="Next Preset"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* 6 Pinned Hotkey Slots [5]-[9] & [0] */}
         <div className="flex items-center gap-1 bg-black/40 p-1 rounded-lg border border-white/5 flex-wrap">
-          <span className="text-[10px] font-mono text-slate-500 px-1.5">VOICE:</span>
-          {PRESETS.map((p, idx) => {
+          {hotkeySlots.map((p, idx) => {
             const isActive = currentPreset.id === p.id;
-            const displayLabel =
-              p.isSamplerVoice
-                ? currentSample
-                  ? `${currentSample.name.slice(0, 10)} (${currentSample.rootNoteOverride || currentSample.analysis.detectedNote})`
-                  : 'Multi-Voice'
-                : p.name;
+            const displayLabel = p.isSamplerVoice
+              ? currentSample
+                ? `${currentSample.name.slice(0, 10)}`
+                : 'Multi-Voice'
+              : p.name;
 
             return (
               <button
@@ -160,7 +207,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
                 onClick={() => onSelectPreset(idx)}
                 className={`flex items-center gap-1.5 px-2 py-1 rounded-md font-mono text-[11px] transition-all cursor-pointer ${
                   isActive
-                    ? 'bg-white/10 text-white font-medium border border-white/15 shadow-sm'
+                    ? 'bg-white/10 text-white font-medium border border-white/15'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
                 }`}
                 style={{
@@ -180,15 +227,28 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           })}
         </div>
 
+        {/* Open Synth Lab & 30+ Preset Designer Modal */}
+        {onOpenSynthLabModal && (
+          <button
+            id="btn-open-synth-lab"
+            onClick={onOpenSynthLabModal}
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-semibold bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 cursor-pointer transition-all"
+            title="Open Synth Lab: 30+ Presets, Sound Designer & Smart Sound Generator"
+          >
+            <Sliders className="h-3.5 w-3.5 text-amber-400" />
+            <span>SYNTH LAB ({allPresets.length})</span>
+          </button>
+        )}
+
         {/* Open Mic / Multi-Voice Studio Modal */}
         <button
           id="btn-open-sampler-studio"
           onClick={onOpenSamplerModal}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-semibold bg-pink-500/15 hover:bg-pink-500/25 text-pink-300 border border-pink-500/40 shadow-sm shadow-pink-500/10 cursor-pointer transition-all"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-semibold bg-pink-500/15 hover:bg-pink-500/25 text-pink-300 border border-pink-500/40 cursor-pointer transition-all"
           title="Open Multi-Voice Studio & Keyboard Mapper"
         >
           <Mic className="h-3.5 w-3.5 text-pink-400" />
-          <span>VOICE STUDIO & MAPPER</span>
+          <span>VOICE STUDIO</span>
         </button>
       </div>
 
@@ -238,7 +298,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           onClick={onToggleChordMode}
           className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg font-mono text-[11px] border transition-all cursor-pointer ${
             isChordMode
-              ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 shadow-sm shadow-purple-500/20'
+              ? 'bg-purple-500/20 border-purple-500/40 text-purple-300'
               : 'bg-black/40 border-white/5 text-slate-400 hover:text-slate-200'
           }`}
           title="Toggle Triad Chord Mode (Hold Shift also triggers Chords)"
@@ -289,7 +349,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           <button
             id="btn-open-diagnostic-modal"
             onClick={onOpenDiagnosticModal}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-semibold border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-all cursor-pointer shadow-sm"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-semibold border border-cyan-500/30 bg-cyan-500/10 text-cyan-300 hover:bg-cyan-500/20 transition-all cursor-pointer"
             title="Open AI Multi-Key Diagnostic & Acoustic Test Suite"
           >
             <Cpu className="h-3 w-3 text-cyan-400" />
@@ -302,7 +362,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           onClick={handleExportClick}
           className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-mono text-[11px] font-semibold border transition-all cursor-pointer ${
             isExporting
-              ? 'bg-rose-500/20 border-rose-500 text-rose-300 shadow-sm shadow-rose-500/30 animate-pulse'
+              ? 'bg-rose-500/20 border-rose-500 text-rose-300 animate-pulse'
               : 'bg-white/[0.04] border-white/10 text-slate-300 hover:bg-white/[0.08]'
           }`}
           title={isExporting ? 'Click to Stop & Save .webm' : 'Record all live & looped audio'}

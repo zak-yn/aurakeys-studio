@@ -1,5 +1,13 @@
 import * as Tone from 'tone';
-import { PRESETS, PresetConfig } from './presets';
+import {
+  PRESETS,
+  PresetConfig,
+  SubOscConfig,
+  NoiseLayerConfig,
+  VoiceFilterConfig,
+  PitchEnvConfig,
+  VibratoConfig,
+} from './presets';
 import { CustomSampleData, RegisteredVoice, SamplerEngine } from './SamplerEngine';
 import { NOTE_SEMITONES, SEMITONE_TO_NOTE } from './scales';
 
@@ -51,18 +59,55 @@ export function noteToHzFast(noteOrHz: string | number): number {
 export function transposeNoteFast(note: string, octaveOffset: number): string {
   if (octaveOffset === 0) return note;
   const match = /^([A-G][#b]?)(-?\d+)$/.exec(note.trim());
-  if (match) {
-    return `${match[1]}${parseInt(match[2], 10) + octaveOffset}`;
+  if (!match) return note;
+  const semi = NOTE_SEMITONES[match[1]] ?? 0;
+  const oct = parseInt(match[2], 10) + octaveOffset;
+  const noteName = SEMITONE_TO_NOTE[((semi % 12) + 12) % 12];
+  return `${noteName}${oct}`;
+}
+
+// Shared static white & pink noise AudioBuffers (created once per AudioContext, zero GC)
+let sharedWhiteNoiseBuffer: AudioBuffer | null = null;
+let sharedPinkNoiseBuffer: AudioBuffer | null = null;
+
+function getSharedNoiseBuffer(ctx: AudioContext, type: 'white' | 'pink'): AudioBuffer {
+  if (type === 'white' && sharedWhiteNoiseBuffer) return sharedWhiteNoiseBuffer;
+  if (type === 'pink' && sharedPinkNoiseBuffer) return sharedPinkNoiseBuffer;
+
+  const sampleRate = ctx.sampleRate;
+  const length = Math.floor(sampleRate * 1.6);
+  const buffer = ctx.createBuffer(1, length, sampleRate);
+  const data = buffer.getChannelData(0);
+
+  if (type === 'white') {
+    for (let i = 0; i < length; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    sharedWhiteNoiseBuffer = buffer;
+  } else {
+    // Paul Kellet's pink noise filter
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < length; i++) {
+      const white = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + white * 0.0555179;
+      b1 = 0.99332 * b1 + white * 0.0750759;
+      b2 = 0.96900 * b2 + white * 0.1538520;
+      b3 = 0.86650 * b3 + white * 0.3104856;
+      b4 = 0.55000 * b4 + white * 0.5329522;
+      b5 = -0.7616 * b5 - white * 0.0168980;
+      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+      b6 = white * 0.115926;
+    }
+    sharedPinkNoiseBuffer = buffer;
   }
-  const midi = Math.round(noteToMidiFast(note)) + octaveOffset * 12;
-  const oct = Math.floor(midi / 12) - 1;
-  const semi = ((midi % 12) + 12) % 12;
-  return `${SEMITONE_TO_NOTE[semi]}${oct}`;
+
+  return buffer;
 }
 
 interface ActiveSynthVoice {
-  key: number; // rounded midi or frequency key
+  key: number;
   oscillators: OscillatorNode[];
+  bufferSources: AudioBufferSourceNode[];
   extraNodes: AudioNode[];
   envGain: GainNode;
   startTime: number;
@@ -77,11 +122,13 @@ interface ActiveSynthVoice {
 }
 
 /**
- * Zero-Leak, Zero-Idle-Node Native Web Audio Polyphonic Synthesizer.
- * Replaces Tone.PolySynth(Tone.Synth) to eliminate:
- * 1. Continuous 1-second _collectGarbage voice graph destruction/re-creation stalls
- * 2. Tone.Oscillator persistent Signal -> AudioParam fan-out memory leaks
- * 3. DeepMerge preset option contamination across fat/fm/basic oscillators
+ * Multi-Layer Zero-Leak Native Web Audio Polyphonic Synthesizer (v2.6).
+ * Supports:
+ * 1. Main Oscillator (Basic, Unison Fat Detune, 2-Op FM)
+ * 2. Sub-Oscillator Layer (-1 / -2 octave sine/triangle/square)
+ * 3. Transient Noise / Breath Layer (White/Pink noise burst or sustained air)
+ * 4. Per-Voice Resonant Filter + Filter Envelope (LP/BP/HP BiquadFilterNode)
+ * 5. Pitch Envelope & Vibrato LFO
  */
 export class NativePolySynth {
   public maxPolyphony: number = 16;
@@ -93,6 +140,11 @@ export class NativePolySynth {
 
   private oscOptions: any = { type: 'fatsawtooth', count: 2, spread: 15 };
   private envOptions = { attack: 0.02, decay: 0.4, sustain: 0.75, release: 1.2 };
+  private subOscOptions?: SubOscConfig;
+  private noiseOptions?: NoiseLayerConfig;
+  private filterOptions?: VoiceFilterConfig;
+  private pitchEnvOptions?: PitchEnvConfig;
+  private vibratoOptions?: VibratoConfig;
 
   constructor(rawCtx: AudioContext, maxPolyphony = 16, initialVolumeDb = -6) {
     this.rawCtx = rawCtx;
@@ -122,9 +174,16 @@ export class NativePolySynth {
     return this;
   }
 
-  public set(options: { oscillator?: any; envelope?: any }) {
+  public set(options: {
+    oscillator?: any;
+    envelope?: any;
+    subOsc?: SubOscConfig;
+    noise?: NoiseLayerConfig;
+    filter?: VoiceFilterConfig;
+    pitchEnv?: PitchEnvConfig;
+    vibrato?: VibratoConfig;
+  }) {
     if (options.oscillator) {
-      // Clean replacement rather than deepMerge so FM/Fat params never cross-contaminate
       this.oscOptions = { ...options.oscillator };
     }
     if (options.envelope) {
@@ -132,6 +191,21 @@ export class NativePolySynth {
         ...this.envOptions,
         ...options.envelope,
       };
+    }
+    if ('subOsc' in options) {
+      this.subOscOptions = options.subOsc ? { ...options.subOsc } : undefined;
+    }
+    if ('noise' in options) {
+      this.noiseOptions = options.noise ? { ...options.noise } : undefined;
+    }
+    if ('filter' in options) {
+      this.filterOptions = options.filter ? { ...options.filter } : undefined;
+    }
+    if ('pitchEnv' in options) {
+      this.pitchEnvOptions = options.pitchEnv ? { ...options.pitchEnv } : undefined;
+    }
+    if ('vibrato' in options) {
+      this.vibratoOptions = options.vibrato ? { ...options.vibrato } : undefined;
     }
   }
 
@@ -201,7 +275,7 @@ export class NativePolySynth {
     const key = this.getKeyForNote(note);
     const freqHz = Math.max(20, Math.min(16000, noteToHzFast(note)));
 
-    // 1. If the exact same note is already playing, smoothly fade it out over 10ms to avoid phase/click buildup
+    // 1. Smoothly fade out duplicate active note on same key
     for (let i = 0; i < this.activeVoices.length; i++) {
       const existing = this.activeVoices[i];
       if (existing.key === key && !existing.released) {
@@ -209,7 +283,7 @@ export class NativePolySynth {
       }
     }
 
-    // 2. Enforce maxPolyphony with smooth voice stealing (oldest released first, otherwise oldest active)
+    // 2. Enforce maxPolyphony with smooth voice stealing
     while (this.activeVoices.length >= this.maxPolyphony) {
       const victim =
         this.activeVoices.find((v) => v.released) || this.activeVoices[0];
@@ -226,34 +300,60 @@ export class NativePolySynth {
     const envGain = ctx.createGain();
     envGain.connect(this.outputGain);
 
-    const oscType: string = this.oscOptions.type || 'sine';
     const oscillators: OscillatorNode[] = [];
+    const carrierOscs: OscillatorNode[] = [];
+    const bufferSources: AudioBufferSourceNode[] = [];
     const extraNodes: AudioNode[] = [];
 
+    // 3. Optional Per-Voice Resonant Filter + Filter Envelope
+    let voiceDest: AudioNode = envGain;
+    if (this.filterOptions && this.filterOptions.enabled) {
+      const flt = ctx.createBiquadFilter();
+      flt.type = this.filterOptions.type || 'lowpass';
+      const baseCutoff = Math.max(60, Math.min(16000, this.filterOptions.cutoffHz || 2400));
+      const resQ = Math.max(0.3, Math.min(15, this.filterOptions.resonanceQ ?? 1.0));
+      const envAmt = this.filterOptions.envAmountHz ?? 0;
+      const envDec = Math.max(0.02, this.filterOptions.envDecay ?? 0.25);
+
+      flt.Q.setValueAtTime(resQ, startTime);
+      if (Math.abs(envAmt) > 10) {
+        const peakCutoff = Math.max(60, Math.min(16000, baseCutoff + envAmt));
+        flt.frequency.setValueAtTime(peakCutoff, startTime);
+        flt.frequency.setTargetAtTime(baseCutoff, startTime + 0.005, envDec / 3);
+      } else {
+        flt.frequency.setValueAtTime(baseCutoff, startTime);
+      }
+
+      flt.connect(envGain);
+      extraNodes.push(flt);
+      voiceDest = flt;
+    }
+
+    // 4. Primary Oscillator (Basic, Fat Unison, or 2-Op FM)
+    const oscType: string = this.oscOptions.type || 'sine';
     let voiceScale = 0.32;
 
     if (oscType.startsWith('fat')) {
       const baseType = (oscType.replace('fat', '') || 'sawtooth') as OscillatorType;
-      const count = Math.min(2, Math.max(1, this.oscOptions.count || 2));
+      const count = Math.min(3, Math.max(1, this.oscOptions.count || 2));
       const spread = this.oscOptions.spread ?? 14;
-      voiceScale = count > 1 ? 0.2 : 0.3;
+      voiceScale = count === 3 ? 0.16 : count === 2 ? 0.21 : 0.3;
 
       for (let c = 0; c < count; c++) {
         const osc = ctx.createOscillator();
         osc.type = baseType;
         osc.frequency.setValueAtTime(freqHz, startTime);
-        if (count > 1) {
-          const detuneCents = (c / (count - 1) - 0.5) * spread;
-          osc.detune.setValueAtTime(detuneCents, startTime);
-        }
-        osc.connect(envGain);
+        const detuneCents = count > 1 ? (c / (count - 1) - 0.5) * spread : 0;
+        osc.detune.setValueAtTime(detuneCents, startTime);
+        osc.connect(voiceDest);
         oscillators.push(osc);
+        carrierOscs.push(osc);
       }
     } else if (oscType.startsWith('fm')) {
       const carrierType = (oscType.replace('fm', '') || 'sine') as OscillatorType;
       const harmonicity = this.oscOptions.harmonicity ?? 1;
       const modIndex = this.oscOptions.modulationIndex ?? 2;
-      voiceScale = 0.34;
+      voiceScale = 0.32;
 
       const carrier = ctx.createOscillator();
       carrier.type = carrierType;
@@ -264,13 +364,17 @@ export class NativePolySynth {
       modulator.frequency.setValueAtTime(freqHz * harmonicity, startTime);
 
       const modGain = ctx.createGain();
-      modGain.gain.setValueAtTime(freqHz * modIndex * 0.45, startTime);
+      const peakMod = freqHz * modIndex * 0.45;
+      modGain.gain.setValueAtTime(peakMod, startTime);
+      // Slight natural FM index decay for realistic electric pianos/bells/plucks
+      modGain.gain.setTargetAtTime(peakMod * 0.35, startTime + 0.01, 0.25);
 
       modulator.connect(modGain);
       modGain.connect(carrier.frequency);
-      carrier.connect(envGain);
+      carrier.connect(voiceDest);
 
       oscillators.push(carrier, modulator);
+      carrierOscs.push(carrier);
       extraNodes.push(modGain);
     } else {
       const basicType = (
@@ -281,17 +385,95 @@ export class NativePolySynth {
       const osc = ctx.createOscillator();
       osc.type = basicType;
       osc.frequency.setValueAtTime(freqHz, startTime);
-      osc.connect(envGain);
+      osc.connect(voiceDest);
       oscillators.push(osc);
+      carrierOscs.push(osc);
     }
 
+    // 5. Sub-Oscillator Layer (-1 or -2 octaves)
+    if (this.subOscOptions && this.subOscOptions.enabled && this.subOscOptions.mix > 0.01) {
+      const subOct = this.subOscOptions.octaveOffset === -2 ? 0.25 : 0.5;
+      const subFreq = Math.max(20, freqHz * subOct);
+      const subOsc = ctx.createOscillator();
+      subOsc.type = this.subOscOptions.type || 'sine';
+      subOsc.frequency.setValueAtTime(subFreq, startTime);
+
+      const subGain = ctx.createGain();
+      subGain.gain.setValueAtTime(Math.min(0.8, this.subOscOptions.mix * 0.55), startTime);
+      subOsc.connect(subGain);
+      subGain.connect(voiceDest);
+
+      oscillators.push(subOsc);
+      carrierOscs.push(subOsc);
+      extraNodes.push(subGain);
+    }
+
+    // 6. Transient Noise / Breath Layer
+    if (this.noiseOptions && this.noiseOptions.enabled && this.noiseOptions.mix > 0.005) {
+      const noiseBuf = getSharedNoiseBuffer(ctx, this.noiseOptions.type || 'pink');
+      const noiseSrc = ctx.createBufferSource();
+      noiseSrc.buffer = noiseBuf;
+
+      const noiseGain = ctx.createGain();
+      const nPeak = Math.min(0.5, this.noiseOptions.mix * 0.45);
+      const nDecay = Math.max(0.01, this.noiseOptions.decay || 0.03);
+      noiseGain.gain.setValueAtTime(nPeak, startTime);
+      noiseGain.gain.setTargetAtTime(0.0001, startTime + 0.003, nDecay / 3);
+
+      noiseSrc.connect(noiseGain);
+      noiseGain.connect(voiceDest);
+
+      bufferSources.push(noiseSrc);
+      extraNodes.push(noiseGain);
+    }
+
+    // 7. Pitch Envelope (for 808 punch, koto bends, brass blips)
+    if (
+      this.pitchEnvOptions &&
+      this.pitchEnvOptions.enabled &&
+      Math.abs(this.pitchEnvOptions.semitones) > 0.05
+    ) {
+      const startCents = this.pitchEnvOptions.semitones * 100;
+      const pDecay = Math.max(0.01, this.pitchEnvOptions.decay || 0.04);
+      for (let i = 0; i < carrierOscs.length; i++) {
+        const baseDetune = carrierOscs[i].detune.value;
+        carrierOscs[i].detune.setValueAtTime(baseDetune + startCents, startTime);
+        carrierOscs[i].detune.setTargetAtTime(baseDetune, startTime + 0.002, pDecay / 3);
+      }
+    }
+
+    // 8. Vibrato LFO
+    if (
+      this.vibratoOptions &&
+      this.vibratoOptions.enabled &&
+      this.vibratoOptions.depthCents > 0.5
+    ) {
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(
+        Math.max(0.3, Math.min(14, this.vibratoOptions.rateHz || 4.5)),
+        startTime
+      );
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.setValueAtTime(
+        Math.min(60, this.vibratoOptions.depthCents),
+        startTime
+      );
+      lfo.connect(lfoGain);
+      for (let i = 0; i < carrierOscs.length; i++) {
+        lfoGain.connect(carrierOscs[i].detune);
+      }
+      oscillators.push(lfo);
+      extraNodes.push(lfoGain);
+    }
+
+    // 9. Amplitude ADSR Envelope
     const attack = Math.max(0.005, this.envOptions.attack ?? 0.015);
     const decay = Math.max(0.015, this.envOptions.decay ?? 0.3);
     const sustain = Math.max(0.001, Math.min(1, this.envOptions.sustain ?? 0.6));
     const release = Math.max(0.02, this.envOptions.release ?? 0.5);
     const peakGain = Math.max(0.001, velocity * voiceScale);
 
-    // Click-free attack and exponential decay
     envGain.gain.setValueAtTime(0.0001, startTime);
     envGain.gain.linearRampToValueAtTime(peakGain, startTime + attack);
     envGain.gain.setTargetAtTime(
@@ -303,6 +485,7 @@ export class NativePolySynth {
     const voiceRecord: ActiveSynthVoice = {
       key,
       oscillators,
+      bufferSources,
       extraNodes,
       envGain,
       startTime,
@@ -324,6 +507,11 @@ export class NativePolySynth {
             oscillators[j].disconnect();
           } catch {}
         }
+        for (let j = 0; j < bufferSources.length; j++) {
+          try {
+            bufferSources[j].disconnect();
+          } catch {}
+        }
         for (let j = 0; j < extraNodes.length; j++) {
           try {
             extraNodes[j].disconnect();
@@ -341,6 +529,9 @@ export class NativePolySynth {
 
     for (let j = 0; j < oscillators.length; j++) {
       oscillators[j].start(startTime);
+    }
+    for (let j = 0; j < bufferSources.length; j++) {
+      bufferSources[j].start(startTime);
     }
 
     this.activeVoices.push(voiceRecord);
@@ -370,6 +561,11 @@ export class NativePolySynth {
     for (let i = 0; i < voice.oscillators.length; i++) {
       try {
         voice.oscillators[i].stop(stopTime);
+      } catch {}
+    }
+    for (let i = 0; i < voice.bufferSources.length; i++) {
+      try {
+        voice.bufferSources[i].stop(stopTime);
       } catch {}
     }
   }
@@ -491,7 +687,6 @@ export class DirectSamplePlayer {
     const midiFloat = noteToMidiFast(note);
     const midiKey = Math.round(midiFloat);
 
-    // Choke any existing active sample on the same key smoothly over 8ms (zero click noise)
     for (let i = 0; i < this.activeSources.length; i++) {
       const existing = this.activeSources[i];
       if (existing.midiKey === midiKey && !existing.released) {
@@ -499,7 +694,6 @@ export class DirectSamplePlayer {
       }
     }
 
-    // Cap concurrent sources per voice to 6
     while (this.activeSources.length >= 6) {
       const oldest = this.activeSources.shift();
       if (oldest) {
@@ -628,24 +822,17 @@ export class SynthEngine {
     return SynthEngine.instance;
   }
 
-  /**
-   * Initializes Web Audio context and builds the multi-voice graph.
-   */
   public async init(): Promise<void> {
     if (this.isReady) return;
 
     await Tone.start();
-
-    // Set optimized lookahead (50ms) for glitch-free scheduling stability on non-high-end laptop CPUs
     Tone.context.lookAhead = 0.05;
 
     const rawCtx = Tone.getContext().rawContext as AudioContext;
 
-    // 1. Master Chain: Filter -> Delay -> Reverb -> MasterBus -> Limiter -> Destination
     this.limiter = new Tone.Limiter(-1).toDestination();
     this.masterBus = new Tone.Volume(0).connect(this.limiter);
 
-    // Compact 1.1s stereo IR cuts real-time FFT ConvolverNode CPU load by ~45% while keeping lush studio space
     this.reverb = new Tone.Reverb({
       decay: 1.1,
       preDelay: 0.01,
@@ -671,19 +858,16 @@ export class SynthEngine {
     this.masterFilterNativeInput.gain.value = 1;
     Tone.connect(this.masterFilterNativeInput, this.masterFilter);
 
-    // 2. Waveform Analyser & Master Recorder connected at Destination
     this.analyser = new Tone.Analyser('waveform', 512);
     Tone.Destination.connect(this.analyser);
 
     this.recorder = new Tone.Recorder();
     Tone.Destination.connect(this.recorder);
 
-    // 3. Live Synth (Polyphony: 16) with -6 dB clean headroom
     this.liveSynth = new NativePolySynth(rawCtx, 16, -6);
     this.applyPresetToSynth(this.liveSynth, this.currentPreset);
     this.liveSynth.connect(this.masterFilterNativeInput);
 
-    // 4. 4 Track Synths with dedicated volume controls (initialized to currentPreset)
     for (let i = 0; i < 4; i++) {
       const vol = new Tone.Volume(-6).connect(this.masterFilter);
       const nativeTrackIn = rawCtx.createGain();
@@ -701,24 +885,18 @@ export class SynthEngine {
 
     this.isReady = true;
 
-    // Apply initial macro values
     this.applyFilterMacro();
     this.applySpaceMacro();
     this.applyEchoMacro();
     this.applySnapMacro();
   }
 
-  /**
-   * Synchronizes the multi-voice DirectSamplePlayer pool with the active voice library.
-   * Zero Web Audio nodes are created at rest; updates existing players in O(1) without graph churn.
-   */
   public syncVoices(voices: RegisteredVoice[]) {
     if (!this.isReady) return;
     const rawCtx = Tone.getContext().rawContext as AudioContext;
 
     const currentVoiceIds = new Set(voices.map((v) => v.id));
 
-    // 1. Dispose removed samplers
     for (const [id, sampler] of this.liveSamplers.entries()) {
       if (!currentVoiceIds.has(id)) {
         try {
@@ -730,7 +908,6 @@ export class SynthEngine {
       }
     }
 
-    // 2. Build or update lightweight players for each voice (0 idle Web Audio nodes!)
     const snapNorm = this.macros.snap / 100;
     const attack = 0.005 + (1 - snapNorm) * 0.025;
     const release = 0.2 + (1 - snapNorm) * 1.3;
@@ -761,7 +938,6 @@ export class SynthEngine {
       }
     }
 
-    // Keep primary liveSampler pointing to first voice for backwards compatibility
     if (voices[0]) {
       this.liveSampler = this.liveSamplers.get(voices[0].id) || null;
       this.liveSamplerFineCents = this.liveSamplerFineCentsMap.get(voices[0].id) || 0;
@@ -769,9 +945,6 @@ export class SynthEngine {
     }
   }
 
-  /**
-   * Loads a user-recorded or uploaded sample into the live DirectSamplePlayer.
-   */
   public loadUserSample(sampleData: CustomSampleData) {
     if (!this.isReady) return;
     const rawCtx = Tone.getContext().rawContext as AudioContext;
@@ -801,9 +974,6 @@ export class SynthEngine {
     );
   }
 
-  /**
-   * Clones the currently loaded user sample onto a specific Looper Track's dedicated Sampler.
-   */
   public lockUserSampleToTrack(trackIndex: number) {
     const sampleData = SamplerEngine.getInstance().currentSample;
     if (!sampleData || !this.trackNativeInputs[trackIndex]) return;
@@ -834,9 +1004,6 @@ export class SynthEngine {
     );
   }
 
-  /**
-   * Plays a quick audition of a specific registered voice.
-   */
   public previewVoice(voice: RegisteredVoice) {
     if (!this.isReady) return;
     const sampler = this.liveSamplers.get(voice.id) || this.liveSampler;
@@ -851,9 +1018,6 @@ export class SynthEngine {
     }
   }
 
-  /**
-   * Plays a quick C4 audition of the currently loaded user sample.
-   */
   public previewUserSample() {
     const voice = SamplerEngine.getInstance().currentSample;
     if (voice) {
@@ -862,7 +1026,7 @@ export class SynthEngine {
   }
 
   /**
-   * Applies preset oscillator & envelope configuration onto a target synth.
+   * Applies full multi-layer preset configuration onto a target NativePolySynth.
    */
   public applyPresetToSynth(synth: NativePolySynth, preset: PresetConfig) {
     try {
@@ -870,6 +1034,11 @@ export class SynthEngine {
       synth.set({
         oscillator: preset.synthOptions.oscillator,
         envelope: preset.synthOptions.envelope,
+        subOsc: preset.synthOptions.subOsc,
+        noise: preset.synthOptions.noise,
+        filter: preset.synthOptions.filter,
+        pitchEnv: preset.synthOptions.pitchEnv,
+        vibrato: preset.synthOptions.vibrato,
       });
     } catch (e) {
       console.warn('Error applying preset to synth:', e);
@@ -877,22 +1046,21 @@ export class SynthEngine {
   }
 
   /**
-   * Sets the live synth instrument preset.
+   * Sets the live synth instrument preset (or updates parameters live from Synth Lab).
    */
-  public setLivePreset(preset: PresetConfig) {
+  public setLivePreset(preset: PresetConfig, releaseActive = true) {
     this.currentPreset = preset;
     if (this.isReady && this.liveSynth && !preset.isSamplerVoice) {
-      try {
-        this.liveSynth.releaseAll();
-      } catch {}
+      if (releaseActive) {
+        try {
+          this.liveSynth.releaseAll();
+        } catch {}
+      }
       this.applyPresetToSynth(this.liveSynth, preset);
       this.applySnapMacro();
     }
   }
 
-  /**
-   * Clones current live preset configuration (or user sampler) onto a specific looper track.
-   */
   public lockPresetToTrack(trackIndex: number, preset: PresetConfig) {
     if (preset.isSamplerVoice) {
       this.trackUsesSampler[trackIndex] = true;
@@ -904,9 +1072,6 @@ export class SynthEngine {
     }
   }
 
-  /**
-   * Triggers a quantized event on a looper track (automatically routes to Track Sampler or Track PolySynth).
-   */
   public triggerTrackEvent(
     trackIndex: number,
     rawNotes: string[],
@@ -940,7 +1105,6 @@ export class SynthEngine {
         this.trackSamplerOctaveShift[trackIndex] ??
         0;
 
-      // Single voice solo for vocal clips (rawNotes[0])
       const noteToPlay = rawNotes[0] || 'C4';
       const tunedNotes = this.transposeAndFineTuneNotes(
         [noteToPlay],
@@ -955,9 +1119,7 @@ export class SynthEngine {
     } else {
       const synth = this.trackSynths[trackIndex];
       if (!synth) return;
-      if (synth.appliedPresetId !== preset.id) {
-        this.applyPresetToSynth(synth, preset);
-      }
+      this.applyPresetToSynth(synth, preset);
       const transposed = this.transposeNotes(rawNotes, preset.octaveOffset);
       try {
         synth.triggerAttackRelease(transposed, durationSeconds, time);
@@ -967,9 +1129,6 @@ export class SynthEngine {
     }
   }
 
-  /**
-   * Adjusts track volume in dB (-36dB to +4dB, or -Infinity if muted).
-   */
   public setTrackVolume(trackIndex: number, volumeDb: number, muted: boolean = false) {
     if (!this.trackVolumes[trackIndex]) return;
     if (muted) {
@@ -979,9 +1138,6 @@ export class SynthEngine {
     }
   }
 
-  /**
-   * Transposes notes based on preset octave offset (e.g. -1 for sub bass) using O(1) fast string transform.
-   */
   public transposeNotes(notes: string[], octaveOffset: number): string[] {
     if (octaveOffset === 0) return notes;
     const out = new Array<string>(notes.length);
@@ -991,9 +1147,6 @@ export class SynthEngine {
     return out;
   }
 
-  /**
-   * Applies both octave shift and microtonal cents correction using cached O(1) frequency lookup.
-   */
   public transposeAndFineTuneNotes(
     notes: string[],
     octaveOffset: number,
@@ -1009,9 +1162,6 @@ export class SynthEngine {
     return out;
   }
 
-  /**
-   * Live Key Press: Triggers attack with zero latency and tracks notes for release.
-   */
   public triggerLiveAttack(code: string, rawNotes: string[]) {
     if (!this.isReady) return;
 
@@ -1024,14 +1174,12 @@ export class SynthEngine {
     if (this.currentPreset.isSamplerVoice) {
       const voice = SamplerEngine.getInstance().getVoiceForKey(code);
       if (!voice) {
-        // Unmapped key in Preset 0: Silent!
         return;
       }
 
       const sampler = this.liveSamplers.get(voice.id) || this.liveSampler;
       if (!sampler) return;
 
-      // Single Voice Solo even if Shift/Chord mode is active (rawNotes[0])
       const noteToPlay = rawNotes[0] || 'C4';
       const fineCents =
         this.liveSamplerFineCentsMap.get(voice.id) ??
@@ -1073,9 +1221,6 @@ export class SynthEngine {
     }
   }
 
-  /**
-   * Live Key Release: Releases the exact frequencies triggered by this physical code.
-   */
   public triggerLiveRelease(code: string) {
     if (!this.isReady) return;
     const active = this.activeCodeNotes.get(code);
@@ -1099,9 +1244,6 @@ export class SynthEngine {
     }
   }
 
-  /**
-   * Safety catch: Releases all currently sounding voices (e.g. on blur or panic).
-   */
   public releaseAllLiveNotes() {
     if (!this.isReady) return;
     try {
@@ -1116,9 +1258,6 @@ export class SynthEngine {
     this.activeCodeNotes.clear();
   }
 
-  /**
-   * Updates only the specific macro parameter that changed, avoiding redundant PolySynth.set() calls.
-   */
   public setMacro(key: keyof MacroControls, val: number) {
     const clamped = Math.max(0, Math.min(100, val));
     if (this.macros[key] === clamped) return;
@@ -1176,32 +1315,41 @@ export class SynthEngine {
     this.delay.feedback.rampTo(delayFb, 0.04);
   }
 
+  /**
+   * Relative Preset Macro Scaling (v2.6):
+   * At default SNAP = 40%, multiplier is 1.0x so every preset keeps its exact crafted ADSR contour.
+   * Higher SNAP tightens attack/decay/release proportionally; lower SNAP softens and lengthens them.
+   */
   private applySnapMacro() {
-    const snapNorm = this.macros.snap / 100;
-    const attack = 0.005 + (1 - snapNorm) * 0.025;
-    const release = 0.2 + (1 - snapNorm) * 1.3;
+    // At snap=40 -> envMult = 1.0; at snap=100 -> envMult = 0.3; at snap=0 -> envMult = 1.46
+    const envMult = Math.max(0.25, 1.0 + ((40 - this.macros.snap) / 60) * 0.7);
     const presetEnv = this.currentPreset.synthOptions.envelope;
+
+    const scaledAttack = Math.max(0.005, presetEnv.attack * envMult);
+    const scaledDecay = Math.max(0.03, presetEnv.decay * (0.45 + 0.55 * envMult));
+    const scaledRelease = Math.max(0.05, presetEnv.release * (0.4 + 0.6 * envMult));
+
     this.liveSynth.set({
       envelope: {
-        attack,
-        decay: presetEnv.decay,
+        attack: scaledAttack,
+        decay: scaledDecay,
         sustain: presetEnv.sustain,
-        release,
+        release: scaledRelease,
       },
     });
+
+    const samplerAttack = 0.005 + (1 - this.macros.snap / 100) * 0.025;
+    const samplerRelease = 0.2 + (1 - this.macros.snap / 100) * 1.3;
     if (this.liveSampler) {
-      this.liveSampler.attack = attack;
-      this.liveSampler.release = release;
+      this.liveSampler.attack = samplerAttack;
+      this.liveSampler.release = samplerRelease;
     }
     for (const sampler of this.liveSamplers.values()) {
-      sampler.attack = attack;
-      sampler.release = release;
+      sampler.attack = samplerAttack;
+      sampler.release = samplerRelease;
     }
   }
 
-  /**
-   * Export Master Audio
-   */
   public async startRecording(): Promise<void> {
     if (!this.isReady) return;
     if (this.recorder.state === 'started') return;

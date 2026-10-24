@@ -1,9 +1,11 @@
 import React from 'react';
 import { Circle, VolumeX, Volume2, Trash2, Mic } from 'lucide-react';
 import { LooperTrack, LoopNoteEvent } from '../audio/LooperEngine';
+import { PRESETS, PresetConfig } from '../audio/presets';
 
 interface LooperStationProps {
   tracks: LooperTrack[];
+  allPresets?: PresetConfig[];
   selectedTrackIndex: number;
   currentStep: number;
   totalSteps: number;
@@ -12,6 +14,7 @@ interface LooperStationProps {
   onToggleMute: (index: number) => void;
   onClearTrack: (index: number) => void;
   onChangeVolume: (index: number, volDb: number) => void;
+  onChangeTrackPreset?: (trackIndex: number, preset: PresetConfig) => void;
 }
 
 const StaticTimelineGrid = React.memo<{ totalSteps: number }>(({ totalSteps }) => {
@@ -68,21 +71,32 @@ const RecordedEventsLayer = React.memo<{
 interface TrackHeaderRowProps {
   track: LooperTrack;
   idx: number;
+  allPresets: PresetConfig[];
   onToggleRecord: (index: number) => void;
   onToggleMute: (index: number) => void;
   onClearTrack: (index: number) => void;
   onChangeVolume: (index: number, volDb: number) => void;
+  onChangeTrackPreset?: (trackIndex: number, preset: PresetConfig) => void;
 }
 
 const TrackHeaderRow = React.memo<TrackHeaderRowProps>(
-  ({ track, idx, onToggleRecord, onToggleMute, onClearTrack, onChangeVolume }) => {
+  ({
+    track,
+    idx,
+    allPresets,
+    onToggleRecord,
+    onToggleMute,
+    onClearTrack,
+    onChangeVolume,
+    onChangeTrackPreset,
+  }) => {
     const isRecording = track.state === 'RECORDING';
     const isOverdubbing = track.state === 'OVERDUBBING';
     const isPlaying = track.state === 'PLAYING';
     const isEmpty = track.state === 'EMPTY';
 
     return (
-      <div className="flex items-center justify-between gap-3 mb-2">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <div className="flex items-center gap-2">
           <div
             className="flex items-center justify-center w-6 h-6 rounded-md font-mono text-xs font-bold text-white"
@@ -96,18 +110,38 @@ const TrackHeaderRow = React.memo<TrackHeaderRowProps>(
 
           <span className="text-xs font-medium text-slate-200">{track.name}</span>
 
-          {/* Preset or Custom Auto-Pitch Sample Badge */}
-          <span
-            className="text-[10px] font-mono px-2 py-0.5 rounded-md border flex items-center gap-1"
+          {/* Live Track Instrument Swapper Dropdown */}
+          <div
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded-md border text-[10px] font-mono"
             style={{
               color: track.preset.color,
               borderColor: `${track.preset.color}40`,
               backgroundColor: `${track.preset.color}15`,
             }}
+            onClick={(e) => e.stopPropagation()}
           >
-            {track.preset.isSamplerVoice && <Mic className="h-2.5 w-2.5" />}
-            <span>{track.customSampleLabel || track.preset.name}</span>
-          </span>
+            {track.preset.isSamplerVoice && <Mic className="h-2.5 w-2.5 shrink-0" />}
+            <select
+              id={`select-track-preset-${idx}`}
+              value={track.preset.id}
+              onChange={(e) => {
+                const chosen = allPresets.find((p) => p.id === e.target.value);
+                if (chosen && onChangeTrackPreset) {
+                  onChangeTrackPreset(idx, chosen);
+                }
+                e.currentTarget.blur();
+              }}
+              className="bg-transparent font-mono text-[10px] font-semibold focus:outline-none cursor-pointer max-w-[140px]"
+              style={{ color: track.preset.color }}
+              title="Swap Track Instrument (works live even while loop is playing!)"
+            >
+              {allPresets.map((p) => (
+                <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                  {p.name} ({p.category})
+                </option>
+              ))}
+            </select>
+          </div>
 
           {/* State Pill */}
           <span
@@ -202,6 +236,7 @@ const TrackHeaderRow = React.memo<TrackHeaderRowProps>(
 
 const LooperStationComponent: React.FC<LooperStationProps> = ({
   tracks,
+  allPresets = PRESETS,
   selectedTrackIndex,
   currentStep,
   totalSteps,
@@ -210,6 +245,7 @@ const LooperStationComponent: React.FC<LooperStationProps> = ({
   onToggleMute,
   onClearTrack,
   onChangeVolume,
+  onChangeTrackPreset,
 }) => {
   const barsCount = totalSteps / 16;
   const playheadLeftPct = `${(currentStep / totalSteps) * 100}%`;
@@ -220,7 +256,7 @@ const LooperStationComponent: React.FC<LooperStationProps> = ({
         <div className="flex items-center gap-2">
           <span className="font-semibold text-slate-200">4-TRACK LOOP STATION</span>
           <span className="text-[10px] text-slate-500">
-            Auto-Quantized 16th Grid • Scale-Locked Re-Pitching
+            Auto-Quantized 16th Grid • Live Track Instrument Swapper
           </span>
         </div>
         <div className="flex items-center gap-3 text-[11px]">
@@ -255,10 +291,12 @@ const LooperStationComponent: React.FC<LooperStationProps> = ({
               <TrackHeaderRow
                 track={track}
                 idx={idx}
+                allPresets={allPresets}
                 onToggleRecord={onToggleRecord}
                 onToggleMute={onToggleMute}
                 onClearTrack={onClearTrack}
                 onChangeVolume={onChangeVolume}
+                onChangeTrackPreset={onChangeTrackPreset}
               />
 
               {/* Bottom Row: Loop Timeline Grid & Playhead */}

@@ -4,7 +4,15 @@ import { LooperEngine, LooperTrack } from './audio/LooperEngine';
 import { DrumMachine, DrumStyle, DrumLaneState, DrumLaneId } from './audio/DrumMachine';
 import { SamplerEngine, CustomSampleData, RegisteredVoice } from './audio/SamplerEngine';
 import { SCALES, ScaleDef, buildKeyboardMap } from './audio/scales';
-import { PRESETS, PresetConfig } from './audio/presets';
+import {
+  PRESETS,
+  PresetConfig,
+  getAllPresets,
+  saveCustomPreset,
+  deleteCustomPreset,
+  loadPinnedPresetIds,
+  savePinnedPresetIds,
+} from './audio/presets';
 import { usePCKeyboard } from './hooks/usePCKeyboard';
 
 import { TopBar } from './components/TopBar';
@@ -12,6 +20,7 @@ import { LooperStation } from './components/LooperStation';
 import { BackingBeatBar } from './components/BackingBeatBar';
 import { DrumSequencerPanel } from './components/DrumSequencerPanel';
 import { SamplerStudioModal } from './components/SamplerStudioModal';
+import { SynthLabModal } from './components/SynthLabModal';
 import { VisualizerAndXY } from './components/VisualizerAndXY';
 import { KeyboardGrid } from './components/KeyboardGrid';
 import { AudioUnlockModal } from './components/AudioUnlockModal';
@@ -20,7 +29,9 @@ import './audio/AuraKeysHarness';
 
 export const App: React.FC = () => {
   const [isUnlocked, setIsUnlocked] = useState(false);
-  const [currentPreset, setCurrentPreset] = useState<PresetConfig>(PRESETS[0]);
+  const [allPresets, setAllPresets] = useState<PresetConfig[]>(() => getAllPresets());
+  const [pinnedPresetIds, setPinnedPresetIds] = useState<string[]>(() => loadPinnedPresetIds());
+  const [currentPreset, setCurrentPreset] = useState<PresetConfig>(() => getAllPresets()[0] || PRESETS[0]);
   const [currentScale, setCurrentScale] = useState<ScaleDef>(SCALES[0]);
   const [currentRoot, setCurrentRoot] = useState<string>('C');
   const [bpm, setBpm] = useState<number>(100);
@@ -53,6 +64,7 @@ export const App: React.FC = () => {
   const [isPaintMode, setIsPaintMode] = useState<boolean>(false);
 
   const [isSamplerModalOpen, setIsSamplerModalOpen] = useState<boolean>(false);
+  const [isSynthLabModalOpen, setIsSynthLabModalOpen] = useState<boolean>(false);
   const [isDiagnosticModalOpen, setIsDiagnosticModalOpen] = useState<boolean>(false);
 
   const [macros, setMacros] = useState<MacroControls>({
@@ -62,6 +74,9 @@ export const App: React.FC = () => {
     echo: 20,
   });
   const macroRafPendingRef = useRef(false);
+
+  const allPresetsRef = useRef<PresetConfig[]>(allPresets);
+  allPresetsRef.current = allPresets;
 
   // Scale Keyboard Mapping
   const keyboardMap = useMemo(() => {
@@ -121,14 +136,52 @@ export const App: React.FC = () => {
     setIsUnlocked(true);
   }, []);
 
-  // Preset Selection
+  // Preset Selection by index in allPresets
   const handleSelectPreset = useCallback((index: number) => {
-    if (index >= 0 && index < PRESETS.length) {
-      const preset = PRESETS[index];
+    const list = allPresetsRef.current;
+    if (index >= 0 && index < list.length) {
+      const preset = list[index];
       setCurrentPreset(preset);
       SynthEngine.getInstance().setLivePreset(preset);
       LooperEngine.getInstance().syncLivePreset(preset);
     }
+  }, []);
+
+  const handleSelectPresetByObject = useCallback((preset: PresetConfig) => {
+    setCurrentPreset(preset);
+    SynthEngine.getInstance().setLivePreset(preset);
+    LooperEngine.getInstance().syncLivePreset(preset);
+  }, []);
+
+  const handleUpdateLivePreset = useCallback((preset: PresetConfig) => {
+    setCurrentPreset(preset);
+    SynthEngine.getInstance().setLivePreset(preset, false);
+    LooperEngine.getInstance().syncLivePreset(preset);
+  }, []);
+
+  const handleSaveCustomPreset = useCallback((preset: PresetConfig) => {
+    const customList = saveCustomPreset(preset);
+    const rebuilt = getAllPresets(customList);
+    setAllPresets(rebuilt);
+    setCurrentPreset(preset);
+    SynthEngine.getInstance().setLivePreset(preset, false);
+    LooperEngine.getInstance().syncLivePreset(preset);
+  }, []);
+
+  const handleDeleteCustomPreset = useCallback((presetId: string) => {
+    const customList = deleteCustomPreset(presetId);
+    const rebuilt = getAllPresets(customList);
+    setAllPresets(rebuilt);
+  }, []);
+
+  const handlePinPresetToHotkey = useCallback((slotIndex: number, presetId: string) => {
+    const currentPinned = loadPinnedPresetIds();
+    const nextPinned = [...currentPinned];
+    nextPinned[slotIndex] = presetId;
+    savePinnedPresetIds(nextPinned);
+    setPinnedPresetIds(nextPinned);
+    const rebuilt = getAllPresets();
+    setAllPresets(rebuilt);
   }, []);
 
   const handleSelectSamplerPreset = useCallback(() => {
@@ -175,7 +228,7 @@ export const App: React.FC = () => {
     });
   }, []);
 
-  // Looper Actions (all memoized so LooperStation only re-renders when needed)
+  // Looper Actions
   const handleSelectTrack = useCallback((index: number) => {
     setSelectedTrackIndex(index);
     LooperEngine.getInstance().selectTrack(index);
@@ -199,7 +252,11 @@ export const App: React.FC = () => {
     LooperEngine.getInstance().setTrackVolume(index, volDb);
   }, []);
 
-  // Drum Machine & Step Sequencer Actions (all memoized so BackingBeatBar never re-renders on step ticks)
+  const handleChangeTrackPreset = useCallback((trackIndex: number, preset: PresetConfig) => {
+    LooperEngine.getInstance().setTrackPreset(trackIndex, preset);
+  }, []);
+
+  // Drum Machine & Step Sequencer Actions
   const handleSelectDrumStyle = useCallback((style: DrumStyle) => {
     setDrumStyle(style);
     DrumMachine.getInstance().setStyle(style);
@@ -267,6 +324,14 @@ export const App: React.FC = () => {
     setIsSamplerModalOpen(false);
   }, []);
 
+  const handleOpenSynthLabModal = useCallback(() => {
+    setIsSynthLabModalOpen(true);
+  }, []);
+
+  const handleCloseSynthLabModal = useCallback(() => {
+    setIsSynthLabModalOpen(false);
+  }, []);
+
   const handleOpenDiagnosticModal = useCallback(() => {
     setIsDiagnosticModalOpen(true);
   }, []);
@@ -275,7 +340,7 @@ export const App: React.FC = () => {
     setIsDiagnosticModalOpen(false);
   }, []);
 
-  // Sound Shaping Macros & XY (immediate audio parameter update + rAF-coalesced React state update)
+  // Sound Shaping Macros & XY
   const scheduleMacroStateSync = useCallback(() => {
     if (macroRafPendingRef.current) return;
     macroRafPendingRef.current = true;
@@ -366,14 +431,29 @@ export const App: React.FC = () => {
         onStartPaintMode={handleStartPaintMode}
       />
 
-      {/* 3. AI Diagnostic & Automated Test Harness Modal */}
+      {/* 3. Synth Lab & 30+ Preset Sound Designer Modal */}
+      <SynthLabModal
+        isOpen={isSynthLabModalOpen}
+        onClose={handleCloseSynthLabModal}
+        allPresets={allPresets}
+        currentPreset={currentPreset}
+        pinnedPresetIds={pinnedPresetIds}
+        onSelectPreset={handleSelectPresetByObject}
+        onUpdateLivePreset={handleUpdateLivePreset}
+        onSaveCustomPreset={handleSaveCustomPreset}
+        onDeleteCustomPreset={handleDeleteCustomPreset}
+        onPinPresetToHotkey={handlePinPresetToHotkey}
+      />
+
+      {/* 4. AI Diagnostic & Automated Test Harness Modal */}
       <AIDiagnosticModal
         isOpen={isDiagnosticModalOpen}
         onClose={handleCloseDiagnosticModal}
       />
 
-      {/* 4. Global Top Control Bar */}
+      {/* 5. Global Top Control Bar */}
       <TopBar
+        allPresets={allPresets}
         currentPreset={currentPreset}
         onSelectPreset={handleSelectPreset}
         currentScale={currentScale}
@@ -392,16 +472,18 @@ export const App: React.FC = () => {
         onStopExport={handleStopExport}
         currentSample={currentSample}
         onOpenSamplerModal={handleOpenSamplerModal}
+        onOpenSynthLabModal={handleOpenSynthLabModal}
         onOpenDiagnosticModal={handleOpenDiagnosticModal}
       />
 
-      {/* 5. Main Workspace Dashboard */}
+      {/* 6. Main Workspace Dashboard */}
       <main className="flex-1 px-3 py-2 flex flex-col gap-2 max-w-[1700px] w-full mx-auto">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 flex-1 items-stretch">
           {/* Middle Left: 4-Track Live Looper Station + Backing Beat Bar + Interactive Drum Sequencer (65% = 8 cols) */}
           <div className="lg:col-span-8 flex flex-col gap-2 justify-between">
             <LooperStation
               tracks={tracks}
+              allPresets={allPresets}
               selectedTrackIndex={selectedTrackIndex}
               currentStep={currentStep}
               totalSteps={totalSteps}
@@ -410,6 +492,7 @@ export const App: React.FC = () => {
               onToggleMute={handleToggleTrackMute}
               onClearTrack={handleClearTrack}
               onChangeVolume={handleChangeTrackVolume}
+              onChangeTrackPreset={handleChangeTrackPreset}
             />
 
             <BackingBeatBar
@@ -453,7 +536,7 @@ export const App: React.FC = () => {
           </div>
         </div>
 
-        {/* 6. Bottom Section: Interactive 3-Row Keyboard Grid with Voice Badges & Paint Mode */}
+        {/* 7. Bottom Section: Interactive 3-Row Keyboard Grid with Voice Badges & Paint Mode */}
         <KeyboardGrid
           keyboardMap={keyboardMap}
           activeKeys={activeKeys}

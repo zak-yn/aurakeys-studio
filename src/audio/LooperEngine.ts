@@ -1,7 +1,7 @@
 import * as Tone from 'tone';
 import { SynthEngine } from './SynthEngine';
 import { DrumMachine } from './DrumMachine';
-import { PRESETS, PresetConfig } from './presets';
+import { PRESETS, PresetConfig, deepClonePreset } from './presets';
 import { KeyNoteInfo } from './scales';
 import { SamplerEngine } from './SamplerEngine';
 
@@ -232,9 +232,10 @@ export class LooperEngine {
       const activePreset = synthEngine.currentPreset;
 
       // Always keep the track's preset & synth synced to the live sound being recorded!
-      if (track.preset.id !== activePreset.id || track.events.length === 0) {
-        track.preset = activePreset;
-        if (activePreset.isSamplerVoice) {
+      const clonedPreset = deepClonePreset(activePreset);
+      if (track.preset.id !== clonedPreset.id || track.events.length === 0) {
+        track.preset = clonedPreset;
+        if (clonedPreset.isSamplerVoice) {
           const sample = SamplerEngine.getInstance().currentSample;
           track.customSampleLabel = sample
             ? `${sample.name} (${sample.analysis.detectedNote})`
@@ -242,7 +243,7 @@ export class LooperEngine {
         } else {
           track.customSampleLabel = undefined;
         }
-        synthEngine.lockPresetToTrack(trackIdx, activePreset);
+        synthEngine.lockPresetToTrack(trackIdx, clonedPreset);
       }
 
       const ticksPerSixteenth = Tone.Transport.PPQ / 4;
@@ -259,7 +260,7 @@ export class LooperEngine {
         isChord,
         notes: [...rawNotes],
         durationSteps: 1,
-        preset: activePreset,
+        preset: clonedPreset,
       };
 
       // Avoid duplicate overlapping hits on the same step
@@ -323,6 +324,7 @@ export class LooperEngine {
   public syncLivePreset(preset: PresetConfig) {
     const synthEngine = SynthEngine.getInstance();
     let updated = false;
+    const cloned = deepClonePreset(preset);
 
     for (let i = 0; i < this.tracks.length; i++) {
       const track = this.tracks[i];
@@ -331,8 +333,8 @@ export class LooperEngine {
         track.state === 'RECORDING' ||
         (track.state === 'OVERDUBBING' && track.events.length === 0)
       ) {
-        track.preset = preset;
-        if (preset.isSamplerVoice) {
+        track.preset = deepClonePreset(cloned);
+        if (cloned.isSamplerVoice) {
           const sample = SamplerEngine.getInstance().currentSample;
           track.customSampleLabel = sample
             ? `${sample.name} (${sample.analysis.detectedNote})`
@@ -340,7 +342,7 @@ export class LooperEngine {
         } else {
           track.customSampleLabel = undefined;
         }
-        synthEngine.lockPresetToTrack(i, preset);
+        synthEngine.lockPresetToTrack(i, track.preset);
         updated = true;
       }
     }
@@ -348,6 +350,32 @@ export class LooperEngine {
     if (updated) {
       this.notifyTracksUpdate();
     }
+  }
+
+  /**
+   * Hot-swaps the instrument preset of a specific Looper track (even while a recorded loop is playing!).
+   */
+  public setTrackPreset(trackIndex: number, preset: PresetConfig) {
+    const track = this.tracks[trackIndex];
+    if (!track) return;
+
+    const cloned = deepClonePreset(preset);
+    track.preset = cloned;
+    if (cloned.isSamplerVoice) {
+      const sample = SamplerEngine.getInstance().currentSample;
+      track.customSampleLabel = sample
+        ? `${sample.name} (${sample.analysis.detectedNote})`
+        : 'Multi-Voice Sampler';
+    } else {
+      track.customSampleLabel = undefined;
+    }
+
+    for (let i = 0; i < track.events.length; i++) {
+      track.events[i].preset = cloned;
+    }
+
+    SynthEngine.getInstance().lockPresetToTrack(trackIndex, cloned);
+    this.notifyTracksUpdate();
   }
 
   public toggleRecordTrack(trackIndex: number) {

@@ -1,6 +1,6 @@
 # AuraKeys Studio — Architectural Specification & Agent Guide
 
-Single Source of Truth for **AuraKeys Studio v2.5**: a polyphonic live synthesizer, **Multi-Voice Keymapping Sampler**, **Auto-Pitch Microphone & File Sampler**, **4-Lane × 16-Step Interactive Drum Machine**, and **4-Track Real-Time Quantized Loop Station** designed for solo keyboard play with zero music theory required.
+Single Source of Truth for **AuraKeys Studio v2.6**: a polyphonic **Multi-Layer Hybrid Synthesizer (30+ Studio Presets & Custom Sound Designer)**, **Multi-Voice Keymapping Sampler**, **Auto-Pitch Microphone & File Sampler**, **4-Lane × 16-Step Interactive Drum Machine**, and **4-Track Real-Time Quantized Loop Station** designed for solo keyboard play with zero music theory required.
 
 ---
 
@@ -38,11 +38,12 @@ src/
 │   ├── VoiceStorage.ts        # IndexedDB persistence layer for recorded voice buffers and keyVoiceMap
 │   ├── AuraKeysHarness.ts     # Autonomous AI Diagnostic Harness (Tests 1-6), polyphony stress testing & acoustic RMS/clip analysis
 │   ├── scales.ts              # Mood scales, note calculation, and 3-row QWERTY code mapping
-│   └── presets.ts             # 5 curated synth voices + Preset 6 (Hotkey 0): Multi-Voice Sampler
+│   └── presets.ts             # 30 studio presets (6 categories x 5) + Preset [0] Sampler + Smart Patch Generator
 ├── components/
-│   ├── TopBar.tsx             # Presets [5-9, 0], VOICE STUDIO & MAPPER, AI TEST button, Key/Scale, BPM, Bars, Export
+│   ├── TopBar.tsx             # < 30+ Preset Browser >, Pinned [5-9, 0], SYNTH LAB, VOICE STUDIO, Key/Scale, BPM, Export
+│   ├── SynthLabModal.tsx      # 30+ Preset Browser, Hotkey [5-9] Pinning, 6-Layer Sound Designer & Smart Generator
 │   ├── AIDiagnosticModal.tsx  # Self-test runner modal: single-note hold, polyphony capture, clock drift, multi-voice verification
-│   ├── LooperStation.tsx      # Memoized 4-Track visual looper cards with isolated playhead layer, Rec/Ovd/Mute/Clear
+│   ├── LooperStation.tsx      # Memoized 4-Track looper cards with inline Track Instrument Swapper (#select-track-preset-0..3)
 │   ├── BackingBeatBar.tsx     # Beat selector, 16-STEP SEQ toggle, PAD REC toggle, and live hit pads
 │   ├── DrumSequencerPanel.tsx # Expandable 4x16 interactive step grid, velocity accents, per-lane mute/vol & sample badge
 │   ├── SamplerStudioModal.tsx # Multi-Voice Studio & Key Mapper modal, waveform display, root pitch selector, and row mappers
@@ -71,6 +72,11 @@ src/
 ---
 
 ## 5. Changelog
+- **2026-10-25 (v2.6)**: Multi-Layer Hybrid Synth Engine, 30+ Studio Presets, Synth Lab Sound Designer & Live Looper Instrument Swapper (`/grill-me` Blueprint).
+  - **Multi-Layer Zero-Leak Hybrid Synth Engine (`SynthEngine.ts`)**: Upgraded `NativePolySynth` with 6 synthesis layers: Primary Oscillator (Unison Detune `fatsawtooth`/`fatsquare`/`fattriangle`, 2-Op FM `fmsine`/`fmtriangle`/`fmsawtooth`, Basic waveforms), Sub-Oscillator (`-1`/`-2` octaves), Shared Pink/White Hammer & Breath Noise Burst, Per-Voice Resonant `BiquadFilterNode` + Filter Envelope, Pitch Attack Bend (`pitchEnv`), and Vibrato LFO (`vibrato`), plus relative `SNAP` macro scaling that preserves each preset's crafted ADSR contour.
+  - **30 Factory Studio Presets + Custom User Library (`presets.ts`)**: Built 30 studio presets across 6 categories (*Keys & E-Pianos*, *Bass & 808*, *Pads & Strings*, *Plucks & World*, *Leads & Winds*, *Bells & Mallet*) plus `Multi-Voice Sampler [0]` and `localStorage` persistence for custom patches and pinned `[5]`–`[9]` hotkey slots.
+  - **Synth Lab & Smart Sound Generator (`SynthLabModal.tsx`, `TopBar.tsx`)**: Added `<` All 30+ Presets `>` quick-stepper in `TopBar` and full `SYNTH LAB` modal with category filtering, hotkey `[5]`–`[9]` pinning, visual 6-layer sound sculpting, 1-click Smart Sound Generator (*Generate Bass/Pad/Pluck/Lead/Bell*, *Mutate*), and live QWERTY pass-through.
+  - **Looper Track Patch Snapshots & Live Instrument Swapper (`LooperEngine.ts`, `LooperStation.tsx`)**: Deep-cloned preset snapshots per track and added `#select-track-preset-0..3` on every track header to swap any recorded loop's instrument live during playback.
 - **2026-10-25 (v2.5.12)**: Simplified Click-Only Voice Painting (`KeyboardGrid.tsx`).
   - **Removed Drag-to-Register Overwrites**: Removed drag-swipe painting across keys so intermediate keys are never accidentally overwritten. Users simply click a voice chip to select the brush, then click individual keys (`BRUSH ON (Click Keys)`) to assign/toggle or use the 1-click `[FILL ALL 30 KEYS]` and `[Fill High/Mid/Bass]` buttons.
 - **2026-10-24 (v2.5.11)**: Dropdown Focus/Typeahead Fix & Looper Track Preset Synchronization.
