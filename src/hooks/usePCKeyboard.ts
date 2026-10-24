@@ -85,12 +85,36 @@ export function usePCKeyboard({
   useEffect(() => {
     if (!isUnlocked) return;
 
+    const isTextEntryElement = (el: HTMLElement | null): boolean => {
+      if (!el) return false;
+      if (el.tagName === 'TEXTAREA' || el.isContentEditable) return true;
+      if (el.tagName === 'INPUT') {
+        const type = ((el as HTMLInputElement).type || 'text').toLowerCase();
+        return type === 'text' || type === 'search' || type === 'url' || type === 'email' || type === 'number' || type === 'password';
+      }
+      return false;
+    };
+
     const handleKeyDown = (event: KeyboardEvent) => {
-      // Ignore key repeat or typing inside an input/select element
+      // Ignore key repeat or typing inside an actual text input field
       if (event.repeat) return;
       const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+      if (isTextEntryElement(target)) {
         return;
+      }
+
+      // If a <select>, <input type="range">, or <button> retained focus after a mouse click,
+      // blur it and prevent default so native browser typeahead/arrow keys never hijack musical keys!
+      if (
+        target &&
+        (target.tagName === 'SELECT' ||
+          target.tagName === 'BUTTON' ||
+          target.tagName === 'INPUT')
+      ) {
+        event.preventDefault();
+        try {
+          target.blur();
+        } catch {}
       }
 
       const code = event.code;
@@ -192,7 +216,7 @@ export function usePCKeyboard({
 
     const handleKeyUp = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) {
+      if (isTextEntryElement(target)) {
         return;
       }
 

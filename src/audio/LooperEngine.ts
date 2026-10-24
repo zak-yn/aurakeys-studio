@@ -14,6 +14,7 @@ export interface LoopNoteEvent {
   isChord: boolean;      // Whether Triad Chord mode was active when recorded
   notes: string[];       // Current scale-locked note pitch array, e.g. ["C4", "E4", "G4"]
   durationSteps: number; // In 16th note increments
+  preset?: PresetConfig; // Exact preset active when this note was recorded
 }
 
 export interface LooperTrack {
@@ -61,7 +62,7 @@ export class LooperEngine {
         state: 'EMPTY',
         isMuted: false,
         volumeDb: -3,
-        preset: PRESETS[i % 5],
+        preset: PRESETS[0],
         events: [],
         recordStepCounter: 0,
       });
@@ -184,7 +185,7 @@ export class LooperEngine {
             ev.notes,
             stepDurationSeconds,
             time,
-            track.preset,
+            ev.preset || track.preset,
             ev.code
           );
         }
@@ -227,6 +228,23 @@ export class LooperEngine {
     if (!track) return;
 
     if (track.state === 'RECORDING' || track.state === 'OVERDUBBING') {
+      const synthEngine = SynthEngine.getInstance();
+      const activePreset = synthEngine.currentPreset;
+
+      // Always keep the track's preset & synth synced to the live sound being recorded!
+      if (track.preset.id !== activePreset.id || track.events.length === 0) {
+        track.preset = activePreset;
+        if (activePreset.isSamplerVoice) {
+          const sample = SamplerEngine.getInstance().currentSample;
+          track.customSampleLabel = sample
+            ? `${sample.name} (${sample.analysis.detectedNote})`
+            : 'Auto-Pitch Sample';
+        } else {
+          track.customSampleLabel = undefined;
+        }
+        synthEngine.lockPresetToTrack(trackIdx, activePreset);
+      }
+
       const ticksPerSixteenth = Tone.Transport.PPQ / 4;
       const currentTicks = Tone.Transport.ticks;
       let quantizedStep = Math.round(currentTicks / ticksPerSixteenth) % this.totalSteps;
@@ -241,6 +259,7 @@ export class LooperEngine {
         isChord,
         notes: [...rawNotes],
         durationSteps: 1,
+        preset: activePreset,
       };
 
       // Avoid duplicate overlapping hits on the same step
@@ -294,6 +313,40 @@ export class LooperEngine {
   public selectTrack(index: number) {
     if (index >= 0 && index < this.tracks.length) {
       this.selectedTrackIndex = index;
+    }
+  }
+
+  /**
+   * Synchronizes the newly selected live preset onto any EMPTY or actively RECORDING/OVERDUBBING track
+   * so the track badge and playback voice always match the user's selected sound.
+   */
+  public syncLivePreset(preset: PresetConfig) {
+    const synthEngine = SynthEngine.getInstance();
+    let updated = false;
+
+    for (let i = 0; i < this.tracks.length; i++) {
+      const track = this.tracks[i];
+      if (
+        track.state === 'EMPTY' ||
+        track.state === 'RECORDING' ||
+        (track.state === 'OVERDUBBING' && track.events.length === 0)
+      ) {
+        track.preset = preset;
+        if (preset.isSamplerVoice) {
+          const sample = SamplerEngine.getInstance().currentSample;
+          track.customSampleLabel = sample
+            ? `${sample.name} (${sample.analysis.detectedNote})`
+            : 'Auto-Pitch Sample';
+        } else {
+          track.customSampleLabel = undefined;
+        }
+        synthEngine.lockPresetToTrack(i, preset);
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      this.notifyTracksUpdate();
     }
   }
 
@@ -357,6 +410,7 @@ export class LooperEngine {
 
     track.events = [];
     track.state = 'EMPTY';
+    track.preset = SynthEngine.getInstance().currentPreset;
     track.customSampleLabel = undefined;
     track.recordStepCounter = 0;
 

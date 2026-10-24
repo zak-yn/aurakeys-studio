@@ -127,6 +127,7 @@ export const App: React.FC = () => {
       const preset = PRESETS[index];
       setCurrentPreset(preset);
       SynthEngine.getInstance().setLivePreset(preset);
+      LooperEngine.getInstance().syncLivePreset(preset);
     }
   }, []);
 

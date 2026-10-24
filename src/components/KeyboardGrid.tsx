@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useRef, useEffect, useCallback } from 'react';
+import React, { useMemo, useState, useRef, useCallback } from 'react';
 import { KeyNoteInfo, ROW_TOP, ROW_MID, ROW_BOT } from '../audio/scales';
 import { RegisteredVoice, SamplerEngine } from '../audio/SamplerEngine';
 import { Paintbrush, X, Check, Pencil, Mic, RotateCcw, Trash2, Sparkles } from 'lucide-react';
@@ -33,7 +33,6 @@ interface KeyboardKeyButtonProps {
   isPaintMode: boolean;
   isChordMode: boolean;
   onKeyPointerDown: (code: string) => void;
-  onKeyPointerEnter: (code: string) => void;
   onVirtualKeyUp: (code: string) => void;
 }
 
@@ -47,18 +46,15 @@ const KeyboardKeyButton = React.memo<KeyboardKeyButtonProps>(
     isPaintMode,
     isChordMode,
     onKeyPointerDown,
-    onKeyPointerEnter,
     onVirtualKeyUp,
   }) => {
     return (
       <button
         id={`key-${code}`}
+        data-key-code={code}
         onPointerDown={(e) => {
           e.preventDefault();
           onKeyPointerDown(code);
-        }}
-        onPointerEnter={() => {
-          onKeyPointerEnter(code);
         }}
         onPointerUp={(e) => {
           e.preventDefault();
@@ -190,21 +186,6 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
   const [dockedRenameText, setDockedRenameText] = useState('');
   const dockedRenameInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Drag-swipe painting state ('assign' | 'unmap' | null)
-  const dragPaintActionRef = useRef<'assign' | 'unmap' | null>(null);
-
-  useEffect(() => {
-    const clearDrag = () => {
-      dragPaintActionRef.current = null;
-    };
-    window.addEventListener('pointerup', clearDrag);
-    window.addEventListener('pointercancel', clearDrag);
-    return () => {
-      window.removeEventListener('pointerup', clearDrag);
-      window.removeEventListener('pointercancel', clearDrag);
-    };
-  }, []);
-
   // O(1) Voice Map lookup instead of O(N) array search per key
   const voiceById = useMemo(() => {
     const map = new Map<string, RegisteredVoice>();
@@ -230,33 +211,20 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
     (code: string) => {
       if (isPaintModeRef.current && activePaintVoiceIdRef.current) {
         const targetId = activePaintVoiceIdRef.current;
+        SamplerEngine.getInstance().setPaintVoice(targetId);
         const alreadyAssigned = keyVoiceMapRef.current[code] === targetId;
-        dragPaintActionRef.current = alreadyAssigned ? 'unmap' : 'assign';
-        if (onPaintKey) {
-          onPaintKey(code);
-        } else {
-          SamplerEngine.getInstance().paintKey(code, targetId);
-        }
+        SamplerEngine.getInstance().setKeyVoiceExplicit(code, alreadyAssigned ? null : targetId);
       }
       onVirtualKeyDown(code);
     },
-    [onPaintKey, onVirtualKeyDown]
+    [onVirtualKeyDown]
   );
 
-  const handleKeyPointerEnter = useCallback(
-    (code: string) => {
-      if (
-        isPaintModeRef.current &&
-        dragPaintActionRef.current &&
-        activePaintVoiceIdRef.current
-      ) {
-        const targetVoiceId =
-          dragPaintActionRef.current === 'assign' ? activePaintVoiceIdRef.current : null;
-        SamplerEngine.getInstance().setKeyVoiceExplicit(code, targetVoiceId);
-      }
-    },
-    []
-  );
+  const handleSelectBrushVoice = (voice: RegisteredVoice) => {
+    SamplerEngine.getInstance().setPaintVoice(voice.id);
+    SamplerEngine.getInstance().previewVoice(voice.id);
+    onStartPaintMode?.(voice.id);
+  };
 
   const handleFillKeys = (codes: string[]) => {
     if (!activePaintVoice) return;
@@ -308,7 +276,6 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
         isPaintMode={isPaintMode}
         isChordMode={isChordMode}
         onKeyPointerDown={handleKeyPointerDown}
-        onKeyPointerEnter={handleKeyPointerEnter}
         onVirtualKeyUp={onVirtualKeyUp}
       />
     );
@@ -340,10 +307,10 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
                     ? 'bg-cyan-500/20 border-cyan-400 text-cyan-200'
                     : 'bg-white/5 border-white/15 text-slate-300 hover:bg-white/10 hover:text-white'
                 }`}
-                title="Toggle Click/Swipe Key Painting Mode"
+                title="Toggle Click Key Painting Mode"
               >
                 <Paintbrush className={`w-3.5 h-3.5 ${isPaintMode ? 'text-cyan-300 animate-pulse' : 'text-pink-400'}`} />
-                <span>{isPaintMode ? 'BRUSH ON (Click or Drag Keys)' : 'CLICK TO PAINT KEYS'}</span>
+                <span>{isPaintMode ? 'BRUSH ON (Click Keys)' : 'CLICK TO PAINT KEYS'}</span>
               </button>
 
               {/* Selected Brush Voice + Inline Rename */}
@@ -492,7 +459,7 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
             </div>
           </div>
 
-          {/* Second Row: Horizontal Scrollable Voice Brush Palette (Click any voice to select & paint) */}
+          {/* Second Row: Horizontal Scrollable Voice Brush Palette */}
           <div
             id="docked-voice-chips"
             className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5 scrollbar-thin"
@@ -506,11 +473,7 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
                 <button
                   key={voice.id}
                   id={`docked-voice-chip-${voice.id}`}
-                  onClick={() => {
-                    SamplerEngine.getInstance().setPaintVoice(voice.id);
-                    SamplerEngine.getInstance().previewVoice(voice.id);
-                    onStartPaintMode?.(voice.id);
-                  }}
+                  onClick={() => handleSelectBrushVoice(voice)}
                   style={{
                     borderColor: isSelectedBrush ? voice.color : `${voice.color}40`,
                     backgroundColor: isSelectedBrush ? `${voice.color}28` : '#0a0c12',
@@ -520,7 +483,7 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
                       ? 'text-white font-bold scale-[1.02]'
                       : 'text-slate-300 hover:text-white'
                   }`}
-                  title={`Select "${voice.name}" brush & audition`}
+                  title={`Click to select "${voice.name}" brush, then click any key below to assign`}
                 >
                   <span
                     className="w-2 h-2 rounded-full shrink-0"
@@ -536,7 +499,7 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
 
       {/* Row 1: Octave 5 (Lead/Highs) */}
       <div className="flex items-center gap-1.5 sm:gap-2">
-        <div className="w-16 sm:w-20 shrink-0 flex flex-col gap-1">
+        <div data-row-fill="top" className="w-16 sm:w-20 shrink-0 flex flex-col gap-1">
           <span className="text-[9px] sm:text-[10px] font-mono uppercase text-cyan-400/80 font-semibold leading-tight">
             High [Q-P]
           </span>
@@ -558,7 +521,7 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
 
       {/* Row 2: Octave 4 (Chords/Main) */}
       <div className="flex items-center gap-1.5 sm:gap-2 pl-1.5 sm:pl-3">
-        <div className="w-16 sm:w-20 shrink-0 flex flex-col gap-1">
+        <div data-row-fill="mid" className="w-16 sm:w-20 shrink-0 flex flex-col gap-1">
           <span className="text-[9px] sm:text-[10px] font-mono uppercase text-amber-400/80 font-semibold leading-tight">
             Mid [A- ;]
           </span>
@@ -580,7 +543,7 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
 
       {/* Row 3: Octave 3 (Bass/Warm) */}
       <div className="flex items-center gap-1.5 sm:gap-2 pl-3 sm:pl-6">
-        <div className="w-16 sm:w-20 shrink-0 flex flex-col gap-1">
+        <div data-row-fill="bot" className="w-16 sm:w-20 shrink-0 flex flex-col gap-1">
           <span className="text-[9px] sm:text-[10px] font-mono uppercase text-emerald-400/80 font-semibold leading-tight">
             Bass [Z- /]
           </span>

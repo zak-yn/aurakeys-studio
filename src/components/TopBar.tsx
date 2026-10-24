@@ -128,13 +128,16 @@ const TopBarComponent: React.FC<TopBarProps> = ({
         {/* Compact Preset Dropdown */}
         <select
           id="preset-dropdown"
-          value={PRESETS.findIndex((p) => p.name === currentPreset.name)}
-          onChange={(e) => onSelectPreset(parseInt(e.target.value, 10))}
-          className="bg-black/40 text-slate-300 border border-white/10 rounded px-2 py-1 focus:outline-none"
+          value={PRESETS.findIndex((p) => p.id === currentPreset.id)}
+          onChange={(e) => {
+            onSelectPreset(parseInt(e.target.value, 10));
+            e.currentTarget.blur();
+          }}
+          className="bg-black/40 text-slate-300 border border-white/10 rounded px-2 py-1 focus:outline-none cursor-pointer"
           title="Select Synth Preset"
         >
           {PRESETS.map((p, idx) => (
-            <option key={idx} value={idx}>
+            <option key={p.id} value={idx} className="bg-slate-900 text-white">
               {p.name} ({p.category})
             </option>
           ))}
@@ -196,7 +199,10 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           <select
             id="select-root-note"
             value={currentRoot}
-            onChange={(e) => onSelectRoot(e.target.value)}
+            onChange={(e) => {
+              onSelectRoot(e.target.value);
+              e.currentTarget.blur();
+            }}
             className="bg-transparent font-mono text-cyan-300 font-bold focus:outline-none cursor-pointer"
           >
             {ROOT_NOTES.map((r) => (
@@ -215,6 +221,7 @@ const TopBarComponent: React.FC<TopBarProps> = ({
             onChange={(e) => {
               const found = SCALES.find((s) => s.id === e.target.value);
               if (found) onSelectScale(found);
+              e.currentTarget.blur();
             }}
             className="bg-transparent font-sans text-slate-200 font-medium focus:outline-none cursor-pointer"
           >
