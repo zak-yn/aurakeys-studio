@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useRef, useCallback } from 'react';
 import { KeyNoteInfo, ROW_TOP, ROW_MID, ROW_BOT } from '../audio/scales';
-import { RegisteredVoice, SamplerEngine } from '../audio/SamplerEngine';
-import { Paintbrush, X, Check, Pencil, Mic, RotateCcw, Trash2, Sparkles } from 'lucide-react';
+import { RegisteredVoice, SamplerEngine, VoicePitchMode } from '../audio/SamplerEngine';
+import { Paintbrush, X, Check, Pencil, Mic, RotateCcw, Trash2, Sparkles, Sliders } from 'lucide-react';
 
 interface KeyboardGridProps {
   keyboardMap: Map<string, KeyNoteInfo>;
@@ -185,6 +185,9 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
   const [isRenamingDocked, setIsRenamingDocked] = useState(false);
   const [dockedRenameText, setDockedRenameText] = useState('');
   const dockedRenameInputRef = useRef<HTMLInputElement | null>(null);
+  const [voicePitchMode, setVoicePitchMode] = useState<VoicePitchMode>(
+    () => SamplerEngine.getInstance().voicePitchMode
+  );
 
   // O(1) Voice Map lookup instead of O(N) array search per key
   const voiceById = useMemo(() => {
@@ -372,6 +375,37 @@ const KeyboardGridComponent: React.FC<KeyboardGridProps> = ({
                     </button>
                   </>
                 )}
+              </div>
+
+              {/* Voice Pitch Mode Selector (Natural Scale / Subtle / Original 1.0x / Full Synth) */}
+              <div className="flex items-center gap-1.5 bg-black/50 border border-cyan-500/25 rounded-lg px-2 py-1 font-mono text-xs">
+                <Sliders className="w-3 h-3 text-cyan-400 shrink-0" />
+                <span className="text-[10px] text-slate-400 uppercase">Pitch:</span>
+                <select
+                  id="select-voice-pitch-mode"
+                  value={voicePitchMode}
+                  onChange={(e) => {
+                    const nextMode = e.target.value as VoicePitchMode;
+                    setVoicePitchMode(nextMode);
+                    SamplerEngine.getInstance().setVoicePitchMode(nextMode);
+                    e.currentTarget.blur();
+                  }}
+                  className="bg-transparent font-mono text-[11px] font-bold text-cyan-300 focus:outline-none cursor-pointer"
+                  title="Control how voice pitch scales across the 3 keyboard rows so high-octave words stay clear and understandable"
+                >
+                  <option value="natural" className="bg-slate-900 text-cyan-300">
+                    Natural Vocal (In-Key, Clear Speech)
+                  </option>
+                  <option value="subtle" className="bg-slate-900 text-emerald-300">
+                    Subtle Pitch (±3 Semitones Max)
+                  </option>
+                  <option value="original" className="bg-slate-900 text-amber-300">
+                    Original Voice (1.0x No Pitch Shift)
+                  </option>
+                  <option value="full" className="bg-slate-900 text-pink-300">
+                    Full 3-Octave (Raw Synth Stretch)
+                  </option>
+                </select>
               </div>
             </div>
 

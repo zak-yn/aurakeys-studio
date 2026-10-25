@@ -701,7 +701,25 @@ export class DirectSamplePlayer {
       }
     }
 
-    const playbackRate = Math.max(0.15, Math.min(6.0, Math.pow(2, (midiFloat - this.anchorMidi) / 12)));
+    const pitchMode = SamplerEngine.getInstance().voicePitchMode;
+    let semitoneShift = midiFloat - this.anchorMidi;
+    if (pitchMode === 'original') {
+      semitoneShift = 0;
+    } else if (pitchMode === 'natural' || pitchMode === 'subtle') {
+      // Fold by whole octaves (12 semitones) into the natural vocal sweet spot [-5, +7] semitones
+      // so high-row keys [Q-P] stay 100% intelligible and in-key without chipmunk speed-up
+      while (semitoneShift > 7) {
+        semitoneShift -= 12;
+      }
+      while (semitoneShift < -5) {
+        semitoneShift += 12;
+      }
+      if (pitchMode === 'subtle') {
+        semitoneShift *= 0.5;
+      }
+    }
+
+    const playbackRate = Math.max(0.15, Math.min(6.0, Math.pow(2, semitoneShift / 12)));
     const source = this.rawCtx.createBufferSource();
     source.buffer = this.buffer;
     source.playbackRate.setValueAtTime(playbackRate, startTime);

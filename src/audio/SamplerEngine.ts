@@ -15,6 +15,9 @@ export interface RegisteredVoice {
 }
 
 export type CustomSampleData = RegisteredVoice;
+export type VoicePitchMode = 'natural' | 'subtle' | 'original' | 'full';
+
+const VOICE_PITCH_MODE_STORAGE_KEY = 'aurakeys_voice_pitch_mode_v26';
 
 export const VOICE_PALETTE = [
   '#06b6d4', // Cyan
@@ -79,6 +82,25 @@ export class SamplerEngine {
   public keyVoiceMap: Record<string, string> = {}; // QWERTY code -> voiceId
   public activePaintVoiceId: string | null = null;
   public activeVoiceIndex: number = 0;
+  public voicePitchMode: VoicePitchMode = (() => {
+    try {
+      const saved = localStorage.getItem(VOICE_PITCH_MODE_STORAGE_KEY);
+      if (saved === 'natural' || saved === 'subtle' || saved === 'original' || saved === 'full') {
+        return saved;
+      }
+    } catch {}
+    return 'natural';
+  })();
+
+  public setVoicePitchMode(mode: VoicePitchMode) {
+    this.voicePitchMode = mode;
+    try {
+      localStorage.setItem(VOICE_PITCH_MODE_STORAGE_KEY, mode);
+    } catch {}
+    for (const fn of this.voicesListeners) {
+      fn([...this.voices], { ...this.keyVoiceMap });
+    }
+  }
 
   public isRecordingMic: boolean = false;
   public micLevel: number = 0;

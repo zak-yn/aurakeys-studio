@@ -1,6 +1,6 @@
 # AuraKeys Studio — Architectural Specification & Agent Guide
 
-Single Source of Truth for **AuraKeys Studio v2.6.1**: a polyphonic **Multi-Layer Hybrid Synthesizer (30+ Studio Presets & Custom Sound Designer)**, **Multi-Voice Keymapping Sampler**, **Auto-Pitch Microphone & File Sampler**, **4-Lane × 16-Step Interactive Drum Machine**, and **4-Track Real-Time Quantized / Free-Timing Loop Station** designed for solo keyboard play with zero music theory required.
+Single Source of Truth for **AuraKeys Studio v2.6.2**: a polyphonic **Multi-Layer Hybrid Synthesizer (30+ Studio Presets & Custom Sound Designer)**, **Multi-Voice Keymapping Sampler**, **Auto-Pitch Microphone & File Sampler**, **4-Lane × 16-Step Interactive Drum Machine**, and **4-Track Real-Time Quantized / Free-Timing Loop Station** designed for solo keyboard play with zero music theory required.
 
 ---
 
@@ -72,6 +72,9 @@ src/
 ---
 
 ## 5. Changelog
+- **2026-10-25 (v2.6.2)**: Vocal Intelligibility Octave Folding & Voice Pitch Mode Selector (`SynthEngine.ts`, `SamplerEngine.ts`, `KeyboardGrid.tsx`).
+  - **Smart Octave Folding (`VoicePitchMode = 'natural'`)**: In `DirectSamplePlayer.startSample`, folded pitch shifts by whole octaves (`±12` semitones) into the natural vocal speaking window `[-5, +7]` semitones (`0.75x–1.49x` speed) while keeping 100% exact scale note tuning, eliminating high-octave chipmunk distortion on `[Q-P]`.
+  - **Docked Voice Pitch Mode Selector (`#select-voice-pitch-mode`)**: Added 1-click selector on the Docked Voice Palette Bar to switch between `Natural Vocal (In-Key, Clear Speech)`, `Subtle Pitch (±3 Semitones Max)`, `Original Voice (1.0x No Pitch Shift)`, and `Full 3-Octave (Raw Synth Stretch)`.
 - **2026-10-25 (v2.6.1)**: Looper Timing Quantize Modes (`1/16`, `1/8`, `1/4`, `Free As-Is`) & Post-Recording Note Timing Editor (`LooperEngine.ts`, `LooperStation.tsx`, `App.tsx`).
   - **Dual Timing Capture (`rawStep` + Quantized `step`)**: Every recorded note now preserves both its exact floating-point human press timing (`rawStep`) and its grid-snapped step (`step`) plus sub-step micro-timing offset (`microOffsetSteps`), locked to the audio-clock playhead (`lastTickAudioTime`) with an anti-double-trigger guard.
   - **Live & Post-Recording Quantize Selector (`#select-track-quantize-0..3`)**: Each track can switch between `GRID 1/16 (Auto-Snap)`, `GRID 1/8 (Auto-Snap)`, `GRID 1/4 (Beat Snap)`, and `FREE (As-Is Timing)` before or *after* recording, non-destructively re-computing all recorded notes from `rawStep`.
