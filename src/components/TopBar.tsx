@@ -12,7 +12,7 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react';
-import { SCALES, ROOT_NOTES, ScaleDef } from '../audio/scales';
+import { SCALES, SCALE_CATEGORIES, ROOT_NOTES, ScaleDef } from '../audio/scales';
 import { PRESETS, PresetConfig } from '../audio/presets';
 import { CustomSampleData } from '../audio/SamplerEngine';
 
@@ -103,6 +103,16 @@ const TopBarComponent: React.FC<TopBarProps> = ({
   const handleStepPreset = (delta: number) => {
     const nextIdx = (currentIdx + delta + allPresets.length) % allPresets.length;
     onSelectPreset(nextIdx);
+  };
+
+  const currentScaleIdx = Math.max(
+    0,
+    SCALES.findIndex((s) => s.id === currentScale.id)
+  );
+
+  const handleStepScale = (delta: number) => {
+    const nextScaleIdx = (currentScaleIdx + delta + SCALES.length) % SCALES.length;
+    onSelectScale(SCALES[nextScaleIdx]);
   };
 
   return (
@@ -273,8 +283,19 @@ const TopBarComponent: React.FC<TopBarProps> = ({
           </select>
         </div>
 
-        <div className="flex items-center gap-1 bg-black/40 px-2 py-1 rounded-lg border border-white/5">
-          <span className="text-[10px] font-mono text-slate-500">SCALE:</span>
+        <div
+          className="flex items-center gap-0.5 bg-black/50 p-0.5 rounded-lg border border-white/10"
+          title={`${currentScale.name} (${currentScale.mood}) — ${currentScale.description}`}
+        >
+          <button
+            id="btn-scale-prev"
+            onClick={() => handleStepScale(-1)}
+            className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded cursor-pointer"
+            title="Previous Musical Scale"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <span className="text-[10px] font-mono text-slate-500 pl-0.5">SCALE:</span>
           <select
             id="select-scale-mode"
             value={currentScale.id}
@@ -283,14 +304,30 @@ const TopBarComponent: React.FC<TopBarProps> = ({
               if (found) onSelectScale(found);
               e.currentTarget.blur();
             }}
-            className="bg-transparent font-sans text-slate-200 font-medium focus:outline-none cursor-pointer"
+            className="bg-transparent font-mono text-[11px] text-amber-200 font-semibold px-1 py-1 focus:outline-none cursor-pointer max-w-[195px]"
           >
-            {SCALES.map((s) => (
-              <option key={s.id} value={s.id} className="bg-slate-900 text-white">
-                {s.name} ({s.mood})
-              </option>
+            {SCALE_CATEGORIES.map((category) => (
+              <optgroup
+                key={category}
+                label={`── ${category} ──`}
+                className="bg-slate-950 text-amber-300 font-mono"
+              >
+                {SCALES.filter((s) => s.category === category).map((s) => (
+                  <option key={s.id} value={s.id} className="bg-slate-900 text-white">
+                    {s.name} ({s.mood})
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </select>
+          <button
+            id="btn-scale-next"
+            onClick={() => handleStepScale(1)}
+            className="p-1 text-slate-400 hover:text-white hover:bg-white/10 rounded cursor-pointer"
+            title="Next Musical Scale"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
 
         <button

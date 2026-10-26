@@ -85,7 +85,7 @@ function getSharedNoiseBuffer(ctx: AudioContext, type: 'white' | 'pink'): AudioB
     }
     sharedWhiteNoiseBuffer = buffer;
   } else {
-    // Paul Kellet's pink noise filter
+    // Paul Kellet's pink noise filter (normalized for rich acoustic breath & transient presence)
     let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
     for (let i = 0; i < length; i++) {
       const white = Math.random() * 2 - 1;
@@ -95,7 +95,8 @@ function getSharedNoiseBuffer(ctx: AudioContext, type: 'white' | 'pink'): AudioB
       b3 = 0.86650 * b3 + white * 0.3104856;
       b4 = 0.55000 * b4 + white * 0.5329522;
       b5 = -0.7616 * b5 - white * 0.0168980;
-      data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.11;
+      const sample = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362) * 0.26;
+      data[i] = Math.max(-0.98, Math.min(0.98, sample));
       b6 = white * 0.115926;
     }
     sharedPinkNoiseBuffer = buffer;
@@ -110,6 +111,12 @@ interface ActiveSynthVoice {
   bufferSources: AudioBufferSourceNode[];
   extraNodes: AudioNode[];
   envGain: GainNode;
+  noiseGain?: GainNode;
+  subGain?: GainNode;
+  filterNode?: BiquadFilterNode;
+  lfoOsc?: OscillatorNode;
+  lfoGain?: GainNode;
+  voiceScale: number;
   startTime: number;
   peakGain: number;
   sustainLevel: number;
@@ -183,6 +190,7 @@ export class NativePolySynth {
     pitchEnv?: PitchEnvConfig;
     vibrato?: VibratoConfig;
   }) {
+    const now = this.rawCtx.currentTime;
     if (options.oscillator) {
       this.oscOptions = { ...options.oscillator };
     }
@@ -194,18 +202,56 @@ export class NativePolySynth {
     }
     if ('subOsc' in options) {
       this.subOscOptions = options.subOsc ? { ...options.subOsc } : undefined;
+      for (let i = 0; i < this.activeVoices.length; i++) {
+        const v = this.activeVoices[i];
+        if (!v.released && v.subGain) {
+          const unisonComp = 0.32 / Math.max(0.12, v.voiceScale);
+          const targetSub =
+            this.subOscOptions && this.subOscOptions.enabled
+              ? Math.min(2.2, this.subOscOptions.mix * 1.45 * unisonComp)
+              : 0;
+          v.subGain.gain.setTargetAtTime(targetSub, now, 0.015);
+        }
+      }
     }
     if ('noise' in options) {
       this.noiseOptions = options.noise ? { ...options.noise } : undefined;
     }
     if ('filter' in options) {
       this.filterOptions = options.filter ? { ...options.filter } : undefined;
+      for (let i = 0; i < this.activeVoices.length; i++) {
+        const v = this.activeVoices[i];
+        if (!v.released && v.filterNode && this.filterOptions) {
+          if (this.filterOptions.enabled) {
+            v.filterNode.type = this.filterOptions.type || 'lowpass';
+            const cutoff = Math.max(60, Math.min(16000, this.filterOptions.cutoffHz || 2400));
+            const q = Math.max(0.3, Math.min(15, this.filterOptions.resonanceQ ?? 1.0));
+            v.filterNode.frequency.setTargetAtTime(cutoff, now, 0.02);
+            v.filterNode.Q.setTargetAtTime(q, now, 0.02);
+          } else {
+            v.filterNode.type = 'lowpass';
+            v.filterNode.frequency.setTargetAtTime(18000, now, 0.02);
+            v.filterNode.Q.setTargetAtTime(0.5, now, 0.02);
+          }
+        }
+      }
     }
     if ('pitchEnv' in options) {
       this.pitchEnvOptions = options.pitchEnv ? { ...options.pitchEnv } : undefined;
     }
     if ('vibrato' in options) {
       this.vibratoOptions = options.vibrato ? { ...options.vibrato } : undefined;
+      for (let i = 0; i < this.activeVoices.length; i++) {
+        const v = this.activeVoices[i];
+        if (!v.released && v.lfoOsc && v.lfoGain && this.vibratoOptions) {
+          const depth = this.vibratoOptions.enabled
+            ? Math.min(80, this.vibratoOptions.depthCents)
+            : 0;
+          const rate = Math.max(0.3, Math.min(14, this.vibratoOptions.rateHz || 4.5));
+          v.lfoOsc.frequency.setTargetAtTime(rate, now, 0.02);
+          v.lfoGain.gain.setTargetAtTime(depth, now, 0.02);
+        }
+      }
     }
   }
 
@@ -301,12 +347,18 @@ export class NativePolySynth {
     envGain.connect(this.outputGain);
 
     const oscillators: OscillatorNode[] = [];
-    const carrierOscs: OscillatorNode[] = [];
+    const pitchedOscs: { osc: OscillatorNode; baseDetune: number }[] = [];
     const bufferSources: AudioBufferSourceNode[] = [];
     const extraNodes: AudioNode[] = [];
 
+    const attack = Math.max(0.005, this.envOptions.attack ?? 0.015);
+    const decay = Math.max(0.015, this.envOptions.decay ?? 0.3);
+    const sustain = Math.max(0.001, Math.min(1, this.envOptions.sustain ?? 0.6));
+    const release = Math.max(0.02, this.envOptions.release ?? 0.5);
+
     // 3. Optional Per-Voice Resonant Filter + Filter Envelope
     let voiceDest: AudioNode = envGain;
+    let filterNode: BiquadFilterNode | undefined;
     if (this.filterOptions && this.filterOptions.enabled) {
       const flt = ctx.createBiquadFilter();
       flt.type = this.filterOptions.type || 'lowpass';
@@ -318,8 +370,10 @@ export class NativePolySynth {
       flt.Q.setValueAtTime(resQ, startTime);
       if (Math.abs(envAmt) > 10) {
         const peakCutoff = Math.max(60, Math.min(16000, baseCutoff + envAmt));
+        const sweepStart = startTime + Math.min(0.08, attack * 0.45);
         flt.frequency.setValueAtTime(peakCutoff, startTime);
-        flt.frequency.setTargetAtTime(baseCutoff, startTime + 0.005, envDec / 3);
+        flt.frequency.linearRampToValueAtTime(peakCutoff, sweepStart);
+        flt.frequency.setTargetAtTime(baseCutoff, sweepStart, envDec / 2.8);
       } else {
         flt.frequency.setValueAtTime(baseCutoff, startTime);
       }
@@ -327,6 +381,7 @@ export class NativePolySynth {
       flt.connect(envGain);
       extraNodes.push(flt);
       voiceDest = flt;
+      filterNode = flt;
     }
 
     // 4. Primary Oscillator (Basic, Fat Unison, or 2-Op FM)
@@ -347,7 +402,7 @@ export class NativePolySynth {
         osc.detune.setValueAtTime(detuneCents, startTime);
         osc.connect(voiceDest);
         oscillators.push(osc);
-        carrierOscs.push(osc);
+        pitchedOscs.push({ osc, baseDetune: detuneCents });
       }
     } else if (oscType.startsWith('fm')) {
       const carrierType = (oscType.replace('fm', '') || 'sine') as OscillatorType;
@@ -374,7 +429,7 @@ export class NativePolySynth {
       carrier.connect(voiceDest);
 
       oscillators.push(carrier, modulator);
-      carrierOscs.push(carrier);
+      pitchedOscs.push({ osc: carrier, baseDetune: 0 }, { osc: modulator, baseDetune: 0 });
       extraNodes.push(modGain);
     } else {
       const basicType = (
@@ -387,62 +442,82 @@ export class NativePolySynth {
       osc.frequency.setValueAtTime(freqHz, startTime);
       osc.connect(voiceDest);
       oscillators.push(osc);
-      carrierOscs.push(osc);
+      pitchedOscs.push({ osc, baseDetune: 0 });
     }
 
-    // 5. Sub-Oscillator Layer (-1 or -2 octaves)
-    if (this.subOscOptions && this.subOscOptions.enabled && this.subOscOptions.mix > 0.01) {
+    // 5. Sub-Oscillator Layer (-1 or -2 octaves) — Unison-compensated for deep, chest-hitting presence
+    let subGainNode: GainNode | undefined;
+    if (this.subOscOptions && this.subOscOptions.enabled && this.subOscOptions.mix > 0.005) {
       const subOct = this.subOscOptions.octaveOffset === -2 ? 0.25 : 0.5;
-      const subFreq = Math.max(20, freqHz * subOct);
+      const subFreq = Math.max(24, freqHz * subOct);
       const subOsc = ctx.createOscillator();
       subOsc.type = this.subOscOptions.type || 'sine';
       subOsc.frequency.setValueAtTime(subFreq, startTime);
 
+      // Compensate for unison voiceScale attenuation so sub-oscillator stays equally powerful on 3x SuperSaws
+      const unisonComp = 0.32 / Math.max(0.12, voiceScale);
       const subGain = ctx.createGain();
-      subGain.gain.setValueAtTime(Math.min(0.8, this.subOscOptions.mix * 0.55), startTime);
+      const subTargetGain = Math.min(2.2, this.subOscOptions.mix * 1.45 * unisonComp);
+      subGain.gain.setValueAtTime(subTargetGain, startTime);
       subOsc.connect(subGain);
-      subGain.connect(voiceDest);
+      // Route sub into envGain directly if filter is highpass/bandpass so sub bass is never thinned out
+      const subTargetDest =
+        this.filterOptions &&
+        this.filterOptions.enabled &&
+        this.filterOptions.type !== 'lowpass'
+          ? envGain
+          : voiceDest;
+      subGain.connect(subTargetDest);
 
       oscillators.push(subOsc);
-      carrierOscs.push(subOsc);
+      pitchedOscs.push({ osc: subOsc, baseDetune: 0 });
       extraNodes.push(subGain);
+      subGainNode = subGain;
     }
 
-    // 6. Transient Noise / Breath Layer
+    // 6. Transient Hammer / Breath Noise Layer — Independent envelope so slow pad attacks or dark filters never mute the burst
+    let noiseGainNode: GainNode | undefined;
     if (this.noiseOptions && this.noiseOptions.enabled && this.noiseOptions.mix > 0.005) {
-      const noiseBuf = getSharedNoiseBuffer(ctx, this.noiseOptions.type || 'pink');
+      const noiseType = this.noiseOptions.type || 'pink';
+      const noiseBuf = getSharedNoiseBuffer(ctx, noiseType);
       const noiseSrc = ctx.createBufferSource();
       noiseSrc.buffer = noiseBuf;
+      noiseSrc.loop = true;
 
       const noiseGain = ctx.createGain();
-      const nPeak = Math.min(0.5, this.noiseOptions.mix * 0.45);
-      const nDecay = Math.max(0.01, this.noiseOptions.decay || 0.03);
-      noiseGain.gain.setValueAtTime(nPeak, startTime);
-      noiseGain.gain.setTargetAtTime(0.0001, startTime + 0.003, nDecay / 3);
+      const nPeak = Math.min(0.75, this.noiseOptions.mix * 0.68 * velocity);
+      const nDecay = Math.max(0.015, this.noiseOptions.decay || 0.05);
+
+      noiseGain.gain.setValueAtTime(0.0001, startTime);
+      noiseGain.gain.linearRampToValueAtTime(nPeak, startTime + 0.003);
+      noiseGain.gain.setTargetAtTime(0.0001, startTime + 0.004, nDecay / 2.2);
 
       noiseSrc.connect(noiseGain);
-      noiseGain.connect(voiceDest);
+      noiseGain.connect(this.outputGain);
 
       bufferSources.push(noiseSrc);
       extraNodes.push(noiseGain);
+      noiseGainNode = noiseGain;
     }
 
-    // 7. Pitch Envelope (for 808 punch, koto bends, brass blips)
+    // 7. Pitch Envelope (for 808 punch, koto bends, laser sweeps, brass blips)
     if (
       this.pitchEnvOptions &&
       this.pitchEnvOptions.enabled &&
       Math.abs(this.pitchEnvOptions.semitones) > 0.05
     ) {
       const startCents = this.pitchEnvOptions.semitones * 100;
-      const pDecay = Math.max(0.01, this.pitchEnvOptions.decay || 0.04);
-      for (let i = 0; i < carrierOscs.length; i++) {
-        const baseDetune = carrierOscs[i].detune.value;
-        carrierOscs[i].detune.setValueAtTime(baseDetune + startCents, startTime);
-        carrierOscs[i].detune.setTargetAtTime(baseDetune, startTime + 0.002, pDecay / 3);
+      const pDecay = Math.max(0.01, this.pitchEnvOptions.decay || 0.06);
+      for (let i = 0; i < pitchedOscs.length; i++) {
+        const { osc, baseDetune } = pitchedOscs[i];
+        osc.detune.setValueAtTime(baseDetune + startCents, startTime);
+        osc.detune.setTargetAtTime(baseDetune, startTime + 0.003, pDecay / 2.6);
       }
     }
 
-    // 8. Vibrato LFO
+    // 8. Vibrato LFO (always created when vibrato config exists so live tweaking works on held notes)
+    let lfoOscNode: OscillatorNode | undefined;
+    let lfoGainNode: GainNode | undefined;
     if (
       this.vibratoOptions &&
       this.vibratoOptions.enabled &&
@@ -456,22 +531,20 @@ export class NativePolySynth {
       );
       const lfoGain = ctx.createGain();
       lfoGain.gain.setValueAtTime(
-        Math.min(60, this.vibratoOptions.depthCents),
+        Math.min(80, this.vibratoOptions.depthCents),
         startTime
       );
       lfo.connect(lfoGain);
-      for (let i = 0; i < carrierOscs.length; i++) {
-        lfoGain.connect(carrierOscs[i].detune);
+      for (let i = 0; i < pitchedOscs.length; i++) {
+        lfoGain.connect(pitchedOscs[i].osc.detune);
       }
       oscillators.push(lfo);
       extraNodes.push(lfoGain);
+      lfoOscNode = lfo;
+      lfoGainNode = lfoGain;
     }
 
     // 9. Amplitude ADSR Envelope
-    const attack = Math.max(0.005, this.envOptions.attack ?? 0.015);
-    const decay = Math.max(0.015, this.envOptions.decay ?? 0.3);
-    const sustain = Math.max(0.001, Math.min(1, this.envOptions.sustain ?? 0.6));
-    const release = Math.max(0.02, this.envOptions.release ?? 0.5);
     const peakGain = Math.max(0.001, velocity * voiceScale);
 
     envGain.gain.setValueAtTime(0.0001, startTime);
@@ -488,6 +561,12 @@ export class NativePolySynth {
       bufferSources,
       extraNodes,
       envGain,
+      noiseGain: noiseGainNode,
+      subGain: subGainNode,
+      filterNode,
+      lfoOsc: lfoOscNode,
+      lfoGain: lfoGainNode,
+      voiceScale,
       startTime,
       peakGain,
       sustainLevel: sustain,
@@ -531,7 +610,8 @@ export class NativePolySynth {
       oscillators[j].start(startTime);
     }
     for (let j = 0; j < bufferSources.length; j++) {
-      bufferSources[j].start(startTime);
+      const randomOffset = Math.random() * 0.8;
+      bufferSources[j].start(startTime, randomOffset);
     }
 
     this.activeVoices.push(voiceRecord);
@@ -556,6 +636,20 @@ export class NativePolySynth {
       param.setTargetAtTime(0.0001, effectiveRelTime, dur / 3.2);
       param.linearRampToValueAtTime(0.0001, effectiveRelTime + dur);
     } catch {}
+
+    if (voice.noiseGain) {
+      const nParam = voice.noiseGain.gain;
+      const nFade = Math.min(0.12, dur);
+      try {
+        if (typeof (nParam as any).cancelAndHoldAtTime === 'function') {
+          (nParam as any).cancelAndHoldAtTime(effectiveRelTime);
+        } else {
+          nParam.cancelScheduledValues(effectiveRelTime);
+          nParam.setValueAtTime(Math.max(0.0001, nParam.value), effectiveRelTime);
+        }
+        nParam.linearRampToValueAtTime(0.0001, effectiveRelTime + nFade);
+      } catch {}
+    }
 
     const stopTime = effectiveRelTime + dur + 0.015;
     for (let i = 0; i < voice.oscillators.length; i++) {

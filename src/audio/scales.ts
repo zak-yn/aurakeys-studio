@@ -2,33 +2,188 @@ export interface ScaleDef {
   id: string;
   name: string;
   mood: string;
+  category: string;
+  description: string;
   intervals: number[]; // semitone offsets from root
 }
 
+export const SCALE_CATEGORIES = [
+  'Pentatonic & Soulful',
+  'Pop, Lo-Fi & Electronic',
+  'Japanese & East Asian',
+  'World & Cinematic',
+  'Jazz, Classical & Dream',
+] as const;
+
 export const SCALES: ScaleDef[] = [
+  // 1. Pentatonic & Soulful
   {
     id: 'daydream',
     name: 'Daydream',
     mood: 'Major Pentatonic',
+    category: 'Pentatonic & Soulful',
+    description: 'Bright, warm, nostalgic 5-note scale — every key combination sounds harmonious',
     intervals: [0, 2, 4, 7, 9],
+  },
+  {
+    id: 'midnight-soul',
+    name: 'Midnight Soul',
+    mood: 'Minor Pentatonic',
+    category: 'Pentatonic & Soulful',
+    description: 'Smooth R&B, neo-soul, hip-hop & synthwave minor groove',
+    intervals: [0, 3, 5, 7, 10],
+  },
+  {
+    id: 'smoky-blues',
+    name: 'Smoky Blues',
+    mood: 'Hexatonic Blues',
+    category: 'Pentatonic & Soulful',
+    description: 'Soulful minor pentatonic infused with the expressive flat-5 blue note',
+    intervals: [0, 3, 5, 6, 7, 10],
+  },
+  {
+    id: 'egyptian-oasis',
+    name: 'Egyptian Oasis',
+    mood: 'Suspended Pentatonic',
+    category: 'Pentatonic & Soulful',
+    description: 'Open, floating fourths and fifths with zero harsh tension',
+    intervals: [0, 2, 5, 7, 10],
+  },
+
+  // 2. Pop, Lo-Fi & Electronic
+  {
+    id: 'pure-major',
+    name: 'Pure Pop Major',
+    mood: 'Natural Major / Ionian',
+    category: 'Pop, Lo-Fi & Electronic',
+    description: 'Classic uplifting 7-note major scale for pop, house & anthems',
+    intervals: [0, 2, 4, 5, 7, 9, 11],
+  },
+  {
+    id: 'velvet-minor',
+    name: 'Velvet Melancholy',
+    mood: 'Natural Minor / Aeolian',
+    category: 'Pop, Lo-Fi & Electronic',
+    description: 'Emotional, moody 7-note minor for modern pop, synthwave & electronic',
+    intervals: [0, 2, 3, 5, 7, 8, 10],
   },
   {
     id: 'latenight',
     name: 'Late Night Lo-Fi',
     mood: 'Dorian Mode',
+    category: 'Pop, Lo-Fi & Electronic',
+    description: 'Jazzy minor with a warm raised 6th — signature chillhop & deep house vibe',
     intervals: [0, 2, 3, 5, 7, 9, 10],
-  },
-  {
-    id: 'sakura',
-    name: 'Sakura Zen',
-    mood: 'In-Sen / Hirajoshi',
-    intervals: [0, 1, 5, 7, 10],
   },
   {
     id: 'cinema',
     name: 'Cinema Uplift',
     mood: 'Lydian Mode',
+    category: 'Pop, Lo-Fi & Electronic',
+    description: 'Dreamy sci-fi wonder & film-score magic with a raised #4th',
     intervals: [0, 2, 4, 6, 7, 9, 11],
+  },
+  {
+    id: 'sunset-groove',
+    name: 'Sunset Groove',
+    mood: 'Mixolydian Mode',
+    category: 'Pop, Lo-Fi & Electronic',
+    description: 'Funky, laid-back indie, disco & West Coast soul with a flat 7th',
+    intervals: [0, 2, 4, 5, 7, 9, 10],
+  },
+  {
+    id: 'dark-cyberpunk',
+    name: 'Dark Cyberpunk',
+    mood: 'Phrygian Mode',
+    category: 'Pop, Lo-Fi & Electronic',
+    description: 'Brooding dark club, techno & trap tension with a half-step flat 2nd',
+    intervals: [0, 1, 3, 5, 7, 8, 10],
+  },
+
+  // 3. Japanese & East Asian
+  {
+    id: 'sakura',
+    name: 'Sakura Zen',
+    mood: 'In-Sen Pentatonic',
+    category: 'Japanese & East Asian',
+    description: 'Meditative Japanese koto & shakuhachi serenity',
+    intervals: [0, 1, 5, 7, 10],
+  },
+  {
+    id: 'kyoto-moonlight',
+    name: 'Kyoto Moonlight',
+    mood: 'Hirajoshi Scale',
+    category: 'Japanese & East Asian',
+    description: 'Crystalline, bittersweet traditional Japanese pentatonic melody',
+    intervals: [0, 2, 3, 7, 8],
+  },
+  {
+    id: 'okinawa-island',
+    name: 'Okinawa Sun',
+    mood: 'Ryukyu Scale',
+    category: 'Japanese & East Asian',
+    description: 'Sunny, heartwarming Okinawan island folk scale (Major 3rd + 4th + 7th)',
+    intervals: [0, 4, 5, 7, 11],
+  },
+  {
+    id: 'tokyo-festival',
+    name: 'Tokyo Festival',
+    mood: 'Yo Scale',
+    category: 'Japanese & East Asian',
+    description: 'Energetic, Spirited Away-style Japanese festival & folk pentatonic',
+    intervals: [0, 2, 5, 7, 9],
+  },
+
+  // 4. World & Cinematic
+  {
+    id: 'desert-mirage',
+    name: 'Desert Mirage',
+    mood: 'Phrygian Dominant / Hijaz',
+    category: 'World & Cinematic',
+    description: 'Exotic Middle Eastern, Flamenco & epic desert soundtrack scale',
+    intervals: [0, 1, 4, 5, 7, 8, 10],
+  },
+  {
+    id: 'byzantine-palace',
+    name: 'Byzantine Palace',
+    mood: 'Double Harmonic Major',
+    category: 'World & Cinematic',
+    description: 'Mystical, high-drama ancient orchestral & surf-noir scale',
+    intervals: [0, 1, 4, 5, 7, 8, 11],
+  },
+  {
+    id: 'gypsy-nocturne',
+    name: 'Gypsy Nocturne',
+    mood: 'Hungarian Minor',
+    category: 'World & Cinematic',
+    description: 'Passionate, dark neo-classical minor with exotic raised 4th & 7th',
+    intervals: [0, 2, 3, 6, 7, 8, 11],
+  },
+
+  // 5. Jazz, Classical & Dream
+  {
+    id: 'classical-drama',
+    name: 'Classical Drama',
+    mood: 'Harmonic Minor',
+    category: 'Jazz, Classical & Dream',
+    description: 'Baroque drama, dark melodic trap & Latin minor with a leading-tone 7th',
+    intervals: [0, 2, 3, 5, 7, 8, 11],
+  },
+  {
+    id: 'neosoul-velvet',
+    name: 'Neo-Soul Velvet',
+    mood: 'Melodic Jazz Minor',
+    category: 'Jazz, Classical & Dream',
+    description: 'Sophisticated modern jazz & lush R&B chord voicings',
+    intervals: [0, 2, 3, 5, 7, 9, 11],
+  },
+  {
+    id: 'dream-sequence',
+    name: 'Dream Sequence',
+    mood: 'Whole Tone (6-Note)',
+    category: 'Jazz, Classical & Dream',
+    description: 'Weightless, floating impressionist dreamscape with equal whole-step intervals',
+    intervals: [0, 2, 4, 6, 8, 10],
   },
 ];
 

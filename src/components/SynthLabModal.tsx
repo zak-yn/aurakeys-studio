@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
   Sliders,
@@ -6,10 +6,10 @@ import {
   Save,
   Trash2,
   Volume2,
-  Pin,
   Wand2,
   Layers,
   Activity,
+  Info,
 } from 'lucide-react';
 import {
   PresetConfig,
@@ -61,9 +61,19 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
   const [draft, setDraft] = useState<PresetConfig>(() => deepClonePreset(currentPreset));
   const [customName, setCustomName] = useState<string>(currentPreset.name);
   const [saveBanner, setSaveBanner] = useState<string | null>(null);
+  const [isAutoAudition, setIsAutoAudition] = useState<boolean>(true);
+  const previewTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (!currentPreset.isSamplerVoice) {
+    if (!isOpen) return;
+    if (currentPreset.isSamplerVoice) {
+      const firstSynth = allPresets.find((p) => !p.isSamplerVoice);
+      if (firstSynth) {
+        onSelectPreset(firstSynth);
+        setDraft(deepClonePreset(firstSynth));
+        setCustomName(firstSynth.name);
+      }
+    } else {
       setDraft(deepClonePreset(currentPreset));
       setCustomName(currentPreset.name);
     }
@@ -78,19 +88,37 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
     return p.category === selectedCategory;
   });
 
-  const applyDraftChange = (updater: (next: PresetConfig) => void) => {
+  const playPreviewForPreset = (presetToPlay: PresetConfig, note = 'C4') => {
+    const engine = SynthEngine.getInstance();
+    if (!engine.isReady || !engine.liveSynth) return;
+    engine.setLivePreset(presetToPlay, false);
+    const notes = engine.transposeNotes([note, 'E4', 'G4'], presetToPlay.octaveOffset);
+    engine.liveSynth.triggerAttackRelease(notes, 0.42);
+  };
+
+  const scheduleAutoPreview = (presetToPlay: PresetConfig) => {
+    if (!isAutoAudition) return;
+    if (previewTimeoutRef.current) {
+      window.clearTimeout(previewTimeoutRef.current);
+    }
+    previewTimeoutRef.current = window.setTimeout(() => {
+      playPreviewForPreset(presetToPlay, 'C4');
+    }, 60);
+  };
+
+  const applyDraftChange = (updater: (next: PresetConfig) => void, autoPreview = false) => {
     const next = deepClonePreset(draft);
+    next.isSamplerVoice = false;
     updater(next);
     setDraft(next);
     onUpdateLivePreset(next);
+    if (autoPreview) {
+      scheduleAutoPreview(next);
+    }
   };
 
   const handleAuditionNote = (note = 'C4') => {
-    const engine = SynthEngine.getInstance();
-    if (!engine.isReady || !engine.liveSynth) return;
-    engine.setLivePreset(draft, false);
-    const notes = engine.transposeNotes([note, 'E4', 'G4'], draft.octaveOffset);
-    engine.liveSynth.triggerAttackRelease(notes, 0.45);
+    playPreviewForPreset(draft, note);
   };
 
   const handleSmartGenerate = (archetype: 'bass' | 'pad' | 'pluck' | 'lead' | 'bell' | 'mutate') => {
@@ -98,7 +126,7 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
     setDraft(generated);
     setCustomName(generated.name);
     onUpdateLivePreset(generated);
-    setTimeout(() => handleAuditionNote('C4'), 20);
+    setTimeout(() => playPreviewForPreset(generated, 'C4'), 20);
   };
 
   const handleSavePatch = () => {
@@ -183,7 +211,20 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              id="btn-synth-lab-auto-audition"
+              onClick={() => setIsAutoAudition((prev) => !prev)}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg font-mono text-[11px] font-semibold border cursor-pointer transition-colors ${
+                isAutoAudition
+                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-200'
+                  : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'
+              }`}
+              title="Automatically play a preview chord whenever you change a setting or release a slider"
+            >
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>AUTO-PREVIEW: {isAutoAudition ? 'ON' : 'OFF'}</span>
+            </button>
             <button
               id="btn-synth-lab-audition"
               onClick={() => handleAuditionNote('C4')}
@@ -385,14 +426,14 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
             )}
 
             {/* 3. Primary Oscillator & Octave */}
-            <div className="p-3.5 rounded-xl bg-[#111520] border border-white/10 space-y-3">
-              <div className="flex items-center justify-between">
+            <div className="p-3.5 rounded-xl bg-[#111520] border border-white/10 space-y-2.5">
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs font-mono font-bold uppercase text-cyan-300 flex items-center gap-1.5">
                   <Layers className="w-3.5 h-3.5" />
                   1. Primary Oscillator &amp; Harmonics
                 </span>
                 <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                  <span className="text-slate-400">Octave:</span>
+                  <span className="text-slate-400">Base Octave:</span>
                   {([-2, -1, 0, 1] as const).map((oct) => (
                     <button
                       key={oct}
@@ -400,13 +441,14 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                       onClick={() =>
                         applyDraftChange((next) => {
                           next.octaveOffset = oct;
-                        })
+                        }, true)
                       }
                       className={`px-2 py-0.5 rounded border cursor-pointer ${
                         draft.octaveOffset === oct
                           ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200 font-bold'
-                          : 'bg-black/40 border-white/10 text-slate-400'
+                          : 'bg-black/40 border-white/10 text-slate-400 hover:text-white'
                       }`}
+                      title={`Shift the entire instrument ${oct === 0 ? 'to standard pitch' : `${oct} octaves`}`}
                     >
                       {oct > 0 ? `+${oct}` : oct}
                     </button>
@@ -414,10 +456,23 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                 </div>
               </div>
 
+              <div
+                id="hint-section-oscillator"
+                className="flex items-start gap-2 px-2.5 py-1.5 rounded-lg bg-cyan-500/[0.06] border border-cyan-500/20 text-[11px] text-slate-300 leading-snug"
+              >
+                <Info className="w-3.5 h-3.5 text-cyan-400 shrink-0 mt-0.5" />
+                <span>
+                  <strong className="text-cyan-200">Hint:</strong> The core sound generator. Pick{' '}
+                  <span className="text-white font-semibold">SuperSaw / Unison</span> for thick, wide synth waves,{' '}
+                  <span className="text-white font-semibold">FM</span> for glassy bells &amp; Rhodes keys, or{' '}
+                  <span className="text-white font-semibold">Pure</span> for clean retro leads &amp; subs.
+                </span>
+              </div>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] font-mono text-slate-400 block mb-1">
-                    Oscillator Engine
+                  <label className="text-[10px] font-mono text-slate-300 font-semibold block mb-1">
+                    Oscillator Waveform Engine
                   </label>
                   <select
                     id="select-synth-osc-type"
@@ -426,9 +481,9 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                       e.currentTarget.blur();
                       applyDraftChange((next) => {
                         next.synthOptions.oscillator.type = e.target.value as any;
-                      });
+                      }, true);
                     }}
-                    className="w-full bg-black/60 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white"
+                    className="w-full bg-black/60 border border-white/15 rounded-lg px-2.5 py-1.5 text-xs font-mono text-white cursor-pointer"
                   >
                     {OSC_TYPES.map((o) => (
                       <option key={o.value} value={o.value} className="bg-[#0d1018]">
@@ -436,16 +491,20 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                       </option>
                     ))}
                   </select>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    Changes the fundamental timbre (buzzy saw, hollow square, glassy FM, or smooth sine).
+                  </p>
                 </div>
 
                 {isFat && (
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <div className="flex justify-between text-[10px] font-mono">
-                        <span className="text-slate-400">Unison Voices</span>
-                        <span className="text-cyan-300">{osc.count || 2}</span>
+                        <span className="text-slate-300">Unison Voices</span>
+                        <span className="text-cyan-300 font-bold">{osc.count || 2}x</span>
                       </div>
                       <input
+                        id="slider-osc-unison-count"
                         type="range"
                         min={1}
                         max={3}
@@ -454,17 +513,21 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                         onChange={(e) =>
                           applyDraftChange((next) => {
                             next.synthOptions.oscillator.count = Number(e.target.value);
-                          })
+                          }, true)
                         }
                         className="w-full accent-cyan-400 cursor-pointer"
                       />
+                      <p className="text-[9px] text-slate-500 leading-tight">
+                        Stacks 1–3 waves together for a wider chorus effect.
+                      </p>
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] font-mono">
-                        <span className="text-slate-400">Detune Spread</span>
-                        <span className="text-cyan-300">{osc.spread ?? 15}¢</span>
+                        <span className="text-slate-300">Detune Spread</span>
+                        <span className="text-cyan-300 font-bold">{osc.spread ?? 15}¢</span>
                       </div>
                       <input
+                        id="slider-osc-detune-spread"
                         type="range"
                         min={2}
                         max={40}
@@ -472,10 +535,18 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                         onChange={(e) =>
                           applyDraftChange((next) => {
                             next.synthOptions.oscillator.spread = Number(e.target.value);
+                            if ((next.synthOptions.oscillator.count || 1) < 2) {
+                              next.synthOptions.oscillator.count = 2;
+                            }
                           })
                         }
+                        onMouseUp={() => scheduleAutoPreview(draft)}
+                        onTouchEnd={() => scheduleAutoPreview(draft)}
                         className="w-full accent-cyan-400 cursor-pointer"
                       />
+                      <p className="text-[9px] text-slate-500 leading-tight">
+                        Low = tight &amp; focused · High = lush, detuned analog width.
+                      </p>
                     </div>
                   </div>
                 )}
@@ -484,10 +555,11 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                   <div className="grid grid-cols-2 gap-2">
                     <div>
                       <div className="flex justify-between text-[10px] font-mono">
-                        <span className="text-slate-400">FM Ratio</span>
-                        <span className="text-cyan-300">{osc.harmonicity ?? 2}x</span>
+                        <span className="text-slate-300">FM Harmonic Ratio</span>
+                        <span className="text-cyan-300 font-bold">{osc.harmonicity ?? 2}x</span>
                       </div>
                       <input
+                        id="slider-osc-fm-ratio"
                         type="range"
                         min={0.5}
                         max={6}
@@ -498,18 +570,24 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                             next.synthOptions.oscillator.harmonicity = Number(e.target.value);
                           })
                         }
+                        onMouseUp={() => scheduleAutoPreview(draft)}
+                        onTouchEnd={() => scheduleAutoPreview(draft)}
                         className="w-full accent-cyan-400 cursor-pointer"
                       />
+                      <p className="text-[9px] text-slate-500 leading-tight">
+                        0.5x = deep sub growl · 1x–2x = warm keys · 3x+ = metallic bells.
+                      </p>
                     </div>
                     <div>
                       <div className="flex justify-between text-[10px] font-mono">
-                        <span className="text-slate-400">FM Mod Depth</span>
-                        <span className="text-cyan-300">{osc.modulationIndex ?? 2}</span>
+                        <span className="text-slate-300">FM Bite / Depth</span>
+                        <span className="text-cyan-300 font-bold">{osc.modulationIndex ?? 2}</span>
                       </div>
                       <input
+                        id="slider-osc-fm-depth"
                         type="range"
                         min={0.2}
-                        max={6}
+                        max={8}
                         step={0.2}
                         value={osc.modulationIndex ?? 2}
                         onChange={(e) =>
@@ -517,9 +595,20 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                             next.synthOptions.oscillator.modulationIndex = Number(e.target.value);
                           })
                         }
+                        onMouseUp={() => scheduleAutoPreview(draft)}
+                        onTouchEnd={() => scheduleAutoPreview(draft)}
                         className="w-full accent-cyan-400 cursor-pointer"
                       />
+                      <p className="text-[9px] text-slate-500 leading-tight">
+                        Low = mellow Rhodes tone · High = bright, aggressive FM bite.
+                      </p>
                     </div>
+                  </div>
+                )}
+
+                {!isFat && !isFM && (
+                  <div className="flex items-center px-3 py-2 rounded-lg bg-black/40 border border-white/5 text-[11px] text-slate-400">
+                    Pure single-oscillator mode active. Switch to a <strong className="text-cyan-300 mx-1">SuperSaw / Unison</strong> or <strong className="text-cyan-300 mx-1">FM</strong> engine on the left to unlock multi-voice detune or FM harmonic controls.
                   </div>
                 )}
               </div>
@@ -528,182 +617,364 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
             {/* 4. Sub-Oscillator & Transient Noise Layers */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/* Sub-Oscillator */}
-              <div className="p-3 rounded-xl bg-[#111520] border border-white/10 space-y-2">
+              <div
+                className={`p-3 rounded-xl border space-y-2 transition-colors ${
+                  sub.enabled
+                    ? 'bg-[#151926] border-amber-500/40'
+                    : 'bg-[#111520] border-white/10'
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-mono font-bold text-amber-300">
-                    2. Sub-Oscillator Layer
+                    2. Sub-Oscillator Bass Layer
                   </span>
-                  <input
-                    id="toggle-sub-osc"
-                    type="checkbox"
-                    checked={sub.enabled}
-                    onChange={(e) =>
-                      applyDraftChange((next) => {
-                        next.synthOptions.subOsc = { ...sub, enabled: e.target.checked };
-                      })
-                    }
-                    className="accent-amber-400 cursor-pointer"
-                  />
-                </div>
-                <div className="flex items-center gap-2 font-mono text-[10px]">
-                  {(['sine', 'triangle', 'square'] as const).map((t) => (
-                    <button
-                      key={t}
-                      onClick={() =>
+                  <label className="flex items-center gap-1.5 cursor-pointer font-mono text-[10px]">
+                    <span className={sub.enabled ? 'text-amber-300 font-bold' : 'text-slate-500'}>
+                      {sub.enabled ? 'ACTIVE' : 'OFF'}
+                    </span>
+                    <input
+                      id="toggle-sub-osc"
+                      type="checkbox"
+                      checked={sub.enabled}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
                         applyDraftChange((next) => {
-                          next.synthOptions.subOsc = { ...sub, enabled: true, type: t };
-                        })
-                      }
-                      className={`px-2 py-0.5 rounded border cursor-pointer uppercase ${
-                        sub.type === t && sub.enabled
-                          ? 'bg-amber-500/20 border-amber-400 text-amber-200'
-                          : 'bg-black/40 border-white/10 text-slate-400'
-                      }`}
-                    >
-                      {t}
-                    </button>
-                  ))}
+                          next.synthOptions.subOsc = {
+                            ...sub,
+                            enabled: checked,
+                            mix: checked && sub.mix < 0.25 ? 0.55 : sub.mix,
+                          };
+                        }, true);
+                      }}
+                      className="accent-amber-400 cursor-pointer w-3.5 h-3.5"
+                    />
+                  </label>
                 </div>
+
+                <div
+                  id="hint-section-sub-osc"
+                  className="flex items-start gap-1.5 px-2 py-1.5 rounded bg-amber-500/[0.07] border border-amber-500/20 text-[10px] text-slate-300 leading-snug"
+                >
+                  <Info className="w-3 h-3 text-amber-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong className="text-amber-200">Hint:</strong> Layers a deep bass wave 1 or 2 octaves below your note to make thin leads or chords sound huge and chest-hitting.
+                  </span>
+                </div>
+
+                <div className="flex items-center justify-between gap-1.5 font-mono text-[10px] flex-wrap">
+                  <div className="flex items-center gap-1">
+                    {(['sine', 'triangle', 'square'] as const).map((t) => (
+                      <button
+                        key={t}
+                        id={`btn-sub-wave-${t}`}
+                        onClick={() =>
+                          applyDraftChange((next) => {
+                            next.synthOptions.subOsc = {
+                              ...sub,
+                              enabled: true,
+                              type: t,
+                              mix: sub.mix < 0.2 ? 0.55 : sub.mix,
+                            };
+                          }, true)
+                        }
+                        className={`px-2 py-0.5 rounded border cursor-pointer uppercase ${
+                          sub.type === t && sub.enabled
+                            ? 'bg-amber-500/25 border-amber-400 text-amber-200 font-bold'
+                            : 'bg-black/40 border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                        title={`Sub waveform: ${t === 'sine' ? 'Pure deep sub' : t === 'triangle' ? 'Warm woody sub' : 'Gritty analog octave buzz'}`}
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    {([-1, -2] as const).map((oct) => (
+                      <button
+                        key={oct}
+                        id={`btn-sub-oct-${Math.abs(oct)}`}
+                        onClick={() =>
+                          applyDraftChange((next) => {
+                            next.synthOptions.subOsc = {
+                              ...sub,
+                              enabled: true,
+                              octaveOffset: oct,
+                              mix: sub.mix < 0.2 ? 0.55 : sub.mix,
+                            };
+                          }, true)
+                        }
+                        className={`px-1.5 py-0.5 rounded border cursor-pointer ${
+                          (sub.octaveOffset || -1) === oct && sub.enabled
+                            ? 'bg-amber-500/25 border-amber-400 text-amber-200 font-bold'
+                            : 'bg-black/40 border-white/10 text-slate-400 hover:text-white'
+                        }`}
+                        title={`${oct} Octave below the main note`}
+                      >
+                        {oct} OCT
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div>
                   <div className="flex justify-between text-[10px] font-mono">
-                    <span className="text-slate-400">Sub Mix (-1 Oct)</span>
-                    <span className="text-amber-300">{Math.round(sub.mix * 100)}%</span>
+                    <span className="text-slate-300">Sub Bass Volume Mix</span>
+                    <span className="text-amber-300 font-bold">
+                      {sub.enabled ? `${Math.round(sub.mix * 100)}%` : '0% (OFF)'}
+                    </span>
                   </div>
                   <input
+                    id="slider-sub-osc-mix"
                     type="range"
                     min={0}
-                    max={0.8}
+                    max={1}
                     step={0.02}
-                    value={sub.mix}
-                    onChange={(e) =>
+                    value={sub.enabled ? sub.mix : 0}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
                       applyDraftChange((next) => {
                         next.synthOptions.subOsc = {
                           ...sub,
-                          enabled: true,
-                          mix: Number(e.target.value),
+                          enabled: val > 0.01,
+                          mix: val,
                         };
-                      })
-                    }
+                      });
+                    }}
+                    onMouseUp={() => scheduleAutoPreview(draft)}
+                    onTouchEnd={() => scheduleAutoPreview(draft)}
                     className="w-full accent-amber-400 cursor-pointer"
                   />
+                  <p className="text-[9px] text-slate-500 leading-tight">
+                    Sine = clean sub rumble · Square = punchy analog octave bass.
+                  </p>
                 </div>
               </div>
 
               {/* Transient Attack / Breath Noise */}
-              <div className="p-3 rounded-xl bg-[#111520] border border-white/10 space-y-2">
+              <div
+                className={`p-3 rounded-xl border space-y-2 transition-colors ${
+                  noise.enabled
+                    ? 'bg-[#191422] border-pink-500/40'
+                    : 'bg-[#111520] border-white/10'
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="text-xs font-mono font-bold text-pink-300">
-                    3. Hammer / Breath Noise
+                    3. Hammer / Breath Noise Layer
                   </span>
-                  <input
-                    id="toggle-noise-layer"
-                    type="checkbox"
-                    checked={noise.enabled}
-                    onChange={(e) =>
-                      applyDraftChange((next) => {
-                        next.synthOptions.noise = { ...noise, enabled: e.target.checked };
-                      })
-                    }
-                    className="accent-pink-400 cursor-pointer"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <div className="flex justify-between text-[10px] font-mono">
-                      <span className="text-slate-400">Noise Level</span>
-                      <span className="text-pink-300">{Math.round(noise.mix * 100)}%</span>
-                    </div>
+                  <label className="flex items-center gap-1.5 cursor-pointer font-mono text-[10px]">
+                    <span className={noise.enabled ? 'text-pink-300 font-bold' : 'text-slate-500'}>
+                      {noise.enabled ? 'ACTIVE' : 'OFF'}
+                    </span>
                     <input
-                      type="range"
-                      min={0}
-                      max={0.4}
-                      step={0.01}
-                      value={noise.mix}
-                      onChange={(e) =>
+                      id="toggle-noise-layer"
+                      type="checkbox"
+                      checked={noise.enabled}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        applyDraftChange((next) => {
+                          next.synthOptions.noise = {
+                            ...noise,
+                            enabled: checked,
+                            mix: checked && noise.mix < 0.18 ? 0.42 : noise.mix,
+                            decay: checked && noise.decay < 0.04 ? 0.12 : noise.decay,
+                          };
+                        }, true);
+                      }}
+                      className="accent-pink-400 cursor-pointer w-3.5 h-3.5"
+                    />
+                  </label>
+                </div>
+
+                <div
+                  id="hint-section-noise"
+                  className="flex items-start gap-1.5 px-2 py-1.5 rounded bg-pink-500/[0.07] border border-pink-500/20 text-[10px] text-slate-300 leading-snug"
+                >
+                  <Info className="w-3 h-3 text-pink-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong className="text-pink-200">Hint:</strong> Adds acoustic key-hammer click, flute breath, or lo-fi vinyl air. Short decay = percussive snap; Long decay = airy breath.
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-1.5 font-mono text-[10px]">
+                  <span className="text-slate-400">Texture:</span>
+                  {(
+                    [
+                      { id: 'pink', label: 'PINK (Warm Breath)' },
+                      { id: 'white', label: 'WHITE (Crisp Snap)' },
+                    ] as const
+                  ).map((nt) => (
+                    <button
+                      key={nt.id}
+                      id={`btn-noise-type-${nt.id}`}
+                      onClick={() =>
                         applyDraftChange((next) => {
                           next.synthOptions.noise = {
                             ...noise,
                             enabled: true,
-                            mix: Number(e.target.value),
+                            type: nt.id,
+                            mix: noise.mix < 0.18 ? 0.42 : noise.mix,
                           };
-                        })
+                        }, true)
                       }
+                      className={`px-2 py-0.5 rounded border cursor-pointer ${
+                        noise.type === nt.id && noise.enabled
+                          ? 'bg-pink-500/25 border-pink-400 text-pink-200 font-bold'
+                          : 'bg-black/40 border-white/10 text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {nt.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="flex justify-between text-[10px] font-mono">
+                      <span className="text-slate-300">Noise Level</span>
+                      <span className="text-pink-300 font-bold">
+                        {noise.enabled ? `${Math.round(noise.mix * 100)}%` : '0%'}
+                      </span>
+                    </div>
+                    <input
+                      id="slider-noise-mix"
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.02}
+                      value={noise.enabled ? noise.mix : 0}
+                      onChange={(e) => {
+                        const val = Number(e.target.value);
+                        applyDraftChange((next) => {
+                          next.synthOptions.noise = {
+                            ...noise,
+                            enabled: val > 0.01,
+                            mix: val,
+                          };
+                        });
+                      }}
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-pink-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight">
+                      How loud the air/click burst is on each key press.
+                    </p>
                   </div>
                   <div>
                     <div className="flex justify-between text-[10px] font-mono">
-                      <span className="text-slate-400">Burst Decay</span>
-                      <span className="text-pink-300">{noise.decay.toFixed(2)}s</span>
+                      <span className="text-slate-300">Burst Decay</span>
+                      <span className="text-pink-300 font-bold">{noise.decay.toFixed(2)}s</span>
                     </div>
                     <input
+                      id="slider-noise-decay"
                       type="range"
-                      min={0.01}
-                      max={0.8}
-                      step={0.01}
+                      min={0.02}
+                      max={0.9}
+                      step={0.02}
                       value={noise.decay}
                       onChange={(e) =>
                         applyDraftChange((next) => {
                           next.synthOptions.noise = {
                             ...noise,
                             enabled: true,
+                            mix: noise.mix < 0.15 ? 0.4 : noise.mix,
                             decay: Number(e.target.value),
                           };
                         })
                       }
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-pink-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight">
+                      0.03s = tight pluck click · 0.40s+ = sustained breath.
+                    </p>
                   </div>
                 </div>
               </div>
             </div>
 
             {/* 5. Per-Voice Resonant Filter & Filter Envelope */}
-            <div className="p-3.5 rounded-xl bg-[#111520] border border-white/10 space-y-2.5">
-              <div className="flex items-center justify-between">
+            <div
+              className={`p-3.5 rounded-xl border space-y-2.5 transition-colors ${
+                flt.enabled
+                  ? 'bg-[#111c1c] border-emerald-500/40'
+                  : 'bg-[#111520] border-white/10'
+              }`}
+            >
+              <div className="flex items-center justify-between flex-wrap gap-2">
                 <span className="text-xs font-mono font-bold text-emerald-300 flex items-center gap-1.5">
                   <Activity className="w-3.5 h-3.5" />
-                  4. Per-Voice Resonant Filter &amp; Envelope Sweep
+                  4. Per-Voice Resonant Filter &amp; Tone Sweep
                 </span>
                 <div className="flex items-center gap-2">
                   {(['lowpass', 'bandpass', 'highpass'] as const).map((ft) => (
                     <button
                       key={ft}
+                      id={`btn-filter-type-${ft}`}
                       onClick={() =>
                         applyDraftChange((next) => {
                           next.synthOptions.filter = { ...flt, enabled: true, type: ft };
-                        })
+                        }, true)
                       }
                       className={`px-2 py-0.5 rounded text-[10px] font-mono border cursor-pointer uppercase ${
                         flt.enabled && flt.type === ft
-                          ? 'bg-emerald-500/20 border-emerald-400 text-emerald-200 font-bold'
-                          : 'bg-black/40 border-white/10 text-slate-400'
+                          ? 'bg-emerald-500/25 border-emerald-400 text-emerald-200 font-bold'
+                          : 'bg-black/40 border-white/10 text-slate-400 hover:text-white'
                       }`}
+                      title={
+                        ft === 'lowpass'
+                          ? 'Lowpass: Cuts high frequencies for warm, mellow tones'
+                          : ft === 'bandpass'
+                          ? 'Bandpass: Focuses midrange like a telephone or wah pedal'
+                          : 'Highpass: Cuts bass for crisp, airy leads and plucks'
+                      }
                     >
                       {ft}
                     </button>
                   ))}
-                  <input
-                    id="toggle-voice-filter"
-                    type="checkbox"
-                    checked={flt.enabled}
-                    onChange={(e) =>
-                      applyDraftChange((next) => {
-                        next.synthOptions.filter = { ...flt, enabled: e.target.checked };
-                      })
-                    }
-                    className="accent-emerald-400 cursor-pointer"
-                  />
+                  <label className="flex items-center gap-1 cursor-pointer font-mono text-[10px] ml-1">
+                    <span className={flt.enabled ? 'text-emerald-300 font-bold' : 'text-slate-500'}>
+                      {flt.enabled ? 'ON' : 'OFF'}
+                    </span>
+                    <input
+                      id="toggle-voice-filter"
+                      type="checkbox"
+                      checked={flt.enabled}
+                      onChange={(e) =>
+                        applyDraftChange((next) => {
+                          next.synthOptions.filter = { ...flt, enabled: e.target.checked };
+                        }, true)
+                      }
+                      className="accent-emerald-400 cursor-pointer w-3.5 h-3.5"
+                    />
+                  </label>
                 </div>
+              </div>
+
+              <div
+                id="hint-section-filter"
+                className="flex items-start gap-2 px-2.5 py-1.5 rounded-lg bg-emerald-500/[0.06] border border-emerald-500/20 text-[11px] text-slate-300 leading-snug"
+              >
+                <Info className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
+                <span>
+                  <strong className="text-emerald-200">Hint:</strong> Shapes brightness like a tone knob or wah pedal.{' '}
+                  <span className="text-white font-semibold">Lowpass</span> makes sounds warm &amp; underwater;{' '}
+                  <span className="text-white font-semibold">Resonance Q</span> adds Acid/Funk squelch;{' '}
+                  <span className="text-white font-semibold">Env Sweep</span> makes each note start bright and quickly mellow out.
+                </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 font-mono text-[10px]">
                 <div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Cutoff</span>
-                    <span className="text-emerald-300">{flt.cutoffHz} Hz</span>
+                    <span className="text-slate-300">Cutoff Freq</span>
+                    <span className="text-emerald-300 font-bold">{flt.cutoffHz} Hz</span>
                   </div>
                   <input
+                    id="slider-filter-cutoff"
                     type="range"
                     min={120}
                     max={9000}
@@ -718,16 +989,22 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                         };
                       })
                     }
+                    onMouseUp={() => scheduleAutoPreview(draft)}
+                    onTouchEnd={() => scheduleAutoPreview(draft)}
                     className="w-full accent-emerald-400 cursor-pointer"
                   />
+                  <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                    Low = dark &amp; muffled · High = bright &amp; open.
+                  </p>
                 </div>
 
                 <div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Resonance Q</span>
-                    <span className="text-emerald-300">{flt.resonanceQ.toFixed(1)}</span>
+                    <span className="text-slate-300">Resonance Q</span>
+                    <span className="text-emerald-300 font-bold">{flt.resonanceQ.toFixed(1)}</span>
                   </div>
                   <input
+                    id="slider-filter-q"
                     type="range"
                     min={0.5}
                     max={10}
@@ -742,16 +1019,22 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                         };
                       })
                     }
+                    onMouseUp={() => scheduleAutoPreview(draft)}
+                    onTouchEnd={() => scheduleAutoPreview(draft)}
                     className="w-full accent-emerald-400 cursor-pointer"
                   />
+                  <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                    Boosts the cutoff edge for vocal &quot;wah&quot; or laser bite.
+                  </p>
                 </div>
 
                 <div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Env Sweep</span>
-                    <span className="text-emerald-300">+{flt.envAmountHz} Hz</span>
+                    <span className="text-slate-300">Env Sweep</span>
+                    <span className="text-emerald-300 font-bold">+{flt.envAmountHz} Hz</span>
                   </div>
                   <input
+                    id="slider-filter-env-amt"
                     type="range"
                     min={0}
                     max={5500}
@@ -766,16 +1049,22 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                         };
                       })
                     }
+                    onMouseUp={() => scheduleAutoPreview(draft)}
+                    onTouchEnd={() => scheduleAutoPreview(draft)}
                     className="w-full accent-emerald-400 cursor-pointer"
                   />
+                  <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                    How much brighter the note starts before settling to Cutoff.
+                  </p>
                 </div>
 
                 <div>
                   <div className="flex justify-between">
-                    <span className="text-slate-400">Sweep Decay</span>
-                    <span className="text-emerald-300">{flt.envDecay.toFixed(2)}s</span>
+                    <span className="text-slate-300">Sweep Decay</span>
+                    <span className="text-emerald-300 font-bold">{flt.envDecay.toFixed(2)}s</span>
                   </div>
                   <input
+                    id="slider-filter-env-decay"
                     type="range"
                     min={0.04}
                     max={1.2}
@@ -790,8 +1079,13 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                         };
                       })
                     }
+                    onMouseUp={() => scheduleAutoPreview(draft)}
+                    onTouchEnd={() => scheduleAutoPreview(draft)}
                     className="w-full accent-emerald-400 cursor-pointer"
                   />
+                  <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                    Fast = snappy pluck filter · Slow = gradual wah sweep.
+                  </p>
                 </div>
               </div>
             </div>
@@ -801,15 +1095,27 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
               {/* Amplitude ADSR */}
               <div className="p-3 rounded-xl bg-[#111520] border border-white/10 space-y-2">
                 <span className="text-xs font-mono font-bold text-purple-300 block">
-                  5. Amplitude ADSR Envelope
+                  5. Volume ADSR Envelope (Note Shape)
                 </span>
+
+                <div
+                  id="hint-section-adsr"
+                  className="flex items-start gap-1.5 px-2 py-1.5 rounded bg-purple-500/[0.07] border border-purple-500/20 text-[10px] text-slate-300 leading-snug"
+                >
+                  <Info className="w-3 h-3 text-purple-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong className="text-purple-200">Hint:</strong> Controls how volume changes from key-down to key-release (Pluck vs. Pad).
+                  </span>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2 font-mono text-[10px]">
                   <div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Attack</span>
-                      <span className="text-purple-300">{env.attack.toFixed(3)}s</span>
+                      <span className="text-slate-300">Attack (Fade In)</span>
+                      <span className="text-purple-300 font-bold">{env.attack.toFixed(3)}s</span>
                     </div>
                     <input
+                      id="slider-adsr-attack"
                       type="range"
                       min={0.005}
                       max={0.4}
@@ -820,15 +1126,21 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                           next.synthOptions.envelope.attack = Number(e.target.value);
                         })
                       }
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-purple-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      0.005s = instant hit · 0.3s = slow swell.
+                    </p>
                   </div>
                   <div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Decay</span>
-                      <span className="text-purple-300">{env.decay.toFixed(2)}s</span>
+                      <span className="text-slate-300">Decay (Drop)</span>
+                      <span className="text-purple-300 font-bold">{env.decay.toFixed(2)}s</span>
                     </div>
                     <input
+                      id="slider-adsr-decay"
                       type="range"
                       min={0.05}
                       max={1.5}
@@ -839,15 +1151,21 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                           next.synthOptions.envelope.decay = Number(e.target.value);
                         })
                       }
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-purple-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      How fast initial peak drops to Sustain level.
+                    </p>
                   </div>
                   <div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Sustain</span>
-                      <span className="text-purple-300">{Math.round(env.sustain * 100)}%</span>
+                      <span className="text-slate-300">Sustain (Hold)</span>
+                      <span className="text-purple-300 font-bold">{Math.round(env.sustain * 100)}%</span>
                     </div>
                     <input
+                      id="slider-adsr-sustain"
                       type="range"
                       min={0.02}
                       max={1}
@@ -858,15 +1176,21 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                           next.synthOptions.envelope.sustain = Number(e.target.value);
                         })
                       }
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-purple-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      Low = short pluck · High = full organ/pad hold.
+                    </p>
                   </div>
                   <div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Release</span>
-                      <span className="text-purple-300">{env.release.toFixed(2)}s</span>
+                      <span className="text-slate-300">Release (Tail)</span>
+                      <span className="text-purple-300 font-bold">{env.release.toFixed(2)}s</span>
                     </div>
                     <input
+                      id="slider-adsr-release"
                       type="range"
                       min={0.08}
                       max={2.2}
@@ -877,8 +1201,13 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                           next.synthOptions.envelope.release = Number(e.target.value);
                         })
                       }
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-purple-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      How long the note rings out after you let go.
+                    </p>
                   </div>
                 </div>
               </div>
@@ -886,20 +1215,32 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
               {/* Vibrato LFO & 808 Pitch Attack */}
               <div className="p-3 rounded-xl bg-[#111520] border border-white/10 space-y-2">
                 <span className="text-xs font-mono font-bold text-rose-300 block">
-                  6. Vibrato Drift &amp; 808 Pitch Punch
+                  6. Vibrato Drift &amp; 808 Pitch Glide
                 </span>
+
+                <div
+                  id="hint-section-vibrato-pitch"
+                  className="flex items-start gap-1.5 px-2 py-1.5 rounded bg-rose-500/[0.07] border border-rose-500/20 text-[10px] text-slate-300 leading-snug"
+                >
+                  <Info className="w-3 h-3 text-rose-400 shrink-0 mt-0.5" />
+                  <span>
+                    <strong className="text-rose-200">Hint:</strong> Vibrato wobbles pitch like vintage tape; Pitch Bend slides into the note for 808 kicks or laser zaps.
+                  </span>
+                </div>
+
                 <div className="grid grid-cols-2 gap-2 font-mono text-[10px]">
                   <div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Vibrato Depth</span>
-                      <span className="text-rose-300">
+                      <span className="text-slate-300">Vibrato Depth</span>
+                      <span className="text-rose-300 font-bold">
                         {vibrato.enabled ? `${vibrato.depthCents}¢` : 'OFF'}
                       </span>
                     </div>
                     <input
+                      id="slider-vibrato-depth"
                       type="range"
                       min={0}
-                      max={30}
+                      max={45}
                       step={1}
                       value={vibrato.enabled ? vibrato.depthCents : 0}
                       onChange={(e) => {
@@ -912,18 +1253,24 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                           };
                         });
                       }}
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-rose-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      Amount of pitch wobble (8¢ = lo-fi tape, 25¢+ = synth lead).
+                    </p>
                   </div>
                   <div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Vibrato Rate</span>
-                      <span className="text-rose-300">{vibrato.rateHz.toFixed(1)} Hz</span>
+                      <span className="text-slate-300">Vibrato Speed</span>
+                      <span className="text-rose-300 font-bold">{vibrato.rateHz.toFixed(1)} Hz</span>
                     </div>
                     <input
+                      id="slider-vibrato-rate"
                       type="range"
                       min={0.8}
-                      max={9}
+                      max={10}
                       step={0.2}
                       value={vibrato.rateHz}
                       onChange={(e) =>
@@ -931,23 +1278,30 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                           next.synthOptions.vibrato = {
                             ...vibrato,
                             enabled: true,
+                            depthCents: vibrato.depthCents < 2 ? 12 : vibrato.depthCents,
                             rateHz: Number(e.target.value),
                           };
                         })
                       }
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-rose-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      1–3 Hz = slow tape drift · 5–8 Hz = fast singer vibrato.
+                    </p>
                   </div>
-                  <div className="col-span-2">
+                  <div>
                     <div className="flex justify-between">
-                      <span className="text-slate-400">Pitch Attack Bend (808 / Pluck Snap)</span>
-                      <span className="text-rose-300">
+                      <span className="text-slate-300">Pitch Attack Bend</span>
+                      <span className="text-rose-300 font-bold">
                         {pitchEnv.enabled ? `${pitchEnv.semitones > 0 ? '+' : ''}${pitchEnv.semitones} st` : '0 st'}
                       </span>
                     </div>
                     <input
+                      id="slider-pitch-bend-semitones"
                       type="range"
-                      min={-6}
+                      min={-12}
                       max={12}
                       step={0.5}
                       value={pitchEnv.enabled ? pitchEnv.semitones : 0}
@@ -958,11 +1312,47 @@ export const SynthLabModal: React.FC<SynthLabModalProps> = ({
                             ...pitchEnv,
                             enabled: Math.abs(val) > 0.1,
                             semitones: val,
+                            decay: pitchEnv.decay || 0.06,
                           };
                         });
                       }}
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
                       className="w-full accent-rose-400 cursor-pointer"
                     />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      +st = drops down (808/laser) · -st = scoops up (brass).
+                    </p>
+                  </div>
+                  <div>
+                    <div className="flex justify-between">
+                      <span className="text-slate-300">Bend Speed</span>
+                      <span className="text-rose-300 font-bold">{(pitchEnv.decay || 0.06).toFixed(2)}s</span>
+                    </div>
+                    <input
+                      id="slider-pitch-bend-decay"
+                      type="range"
+                      min={0.02}
+                      max={0.45}
+                      step={0.01}
+                      value={pitchEnv.decay || 0.06}
+                      onChange={(e) =>
+                        applyDraftChange((next) => {
+                          next.synthOptions.pitchEnv = {
+                            ...pitchEnv,
+                            enabled: true,
+                            semitones: Math.abs(pitchEnv.semitones) < 0.5 ? 7 : pitchEnv.semitones,
+                            decay: Number(e.target.value),
+                          };
+                        })
+                      }
+                      onMouseUp={() => scheduleAutoPreview(draft)}
+                      onTouchEnd={() => scheduleAutoPreview(draft)}
+                      className="w-full accent-rose-400 cursor-pointer"
+                    />
+                    <p className="text-[9px] text-slate-500 leading-tight font-sans">
+                      0.03s = punchy 808 kick thump · 0.25s = slow riser slide.
+                    </p>
                   </div>
                 </div>
               </div>
